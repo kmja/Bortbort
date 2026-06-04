@@ -27,6 +27,7 @@ const SUPPORTED_IMAGE_TYPES = [
 
 interface TraderaStatus {
   appConfigured: boolean;
+  appPoolSize?: number;
   sandbox: boolean;
   userConnected: boolean;
   userId: number | null;
@@ -58,7 +59,7 @@ interface IdentifyDraft {
   identificationConfidence?: string;
 }
 
-type Busy = "identify" | "price" | "ping" | "listing" | null;
+type Busy = "identify" | "price" | "ping" | "listing" | "publish" | null;
 
 function readAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -105,6 +106,7 @@ export function LoppisApp() {
   const [diag, setDiag] = useState<{ title: string; data: unknown } | null>(
     null,
   );
+  const [traderaCategoryId, setTraderaCategoryId] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const refreshStatus = useCallback(async () => {
@@ -256,6 +258,48 @@ export function LoppisApp() {
     }
   }
 
+  async function publishToTradera() {
+    if (!draft) return;
+    if (!traderaCategoryId.trim()) {
+      toast.error("Ange en Tradera kategori-id.");
+      return;
+    }
+    const priceDigits = draft.price.replace(/[^\d]/g, "");
+    if (!priceDigits) {
+      toast.error("Ange ett pris innan du publicerar.");
+      return;
+    }
+    setBusy("publish");
+    try {
+      const description = [
+        draft.description,
+        draft.conditionNotes ? `Skick: ${draft.conditionNotes}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+      const res = await fetch("/api/tradera/list", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          title: draft.title,
+          description,
+          categoryId: Number(traderaCategoryId),
+          startPrice: Number(priceDigits),
+          durationDays: 7,
+        }),
+      });
+      const data = await res.json();
+      setDiag({ title: "POST /api/tradera/list", data });
+      if (data.ok) toast.success("Annons skickad till Tradera.");
+      else toast.error(data.error ?? "Kunde inte publicera på Tradera.");
+    } catch {
+      toast.error("Nätverksfel vid Tradera-publicering.");
+    } finally {
+      setBusy(null);
+      void refreshStatus();
+    }
+  }
+
   return (
     <div className="flex flex-col gap-6">
       <StatusBar status={status} />
@@ -397,6 +441,42 @@ export function LoppisApp() {
         </Card>
       )}
 
+      {draft && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Steg 3 · Publicera på Tradera (API)</CardTitle>
+            <CardDescription>
+              Postar det aktuella utkastet via Traderas API (auto-publicering).
+              Kräver ett anslutet konto och en giltig Tradera kategori-id.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3">
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="tradera-category">Tradera kategori-id</Label>
+              <Input
+                id="tradera-category"
+                inputMode="numeric"
+                placeholder="t.ex. 1612"
+                value={traderaCategoryId}
+                onChange={(e) => setTraderaCategoryId(e.target.value)}
+                className="max-w-40"
+              />
+            </div>
+            <Button
+              onClick={publishToTradera}
+              disabled={busy !== null || status?.userConnected === false}
+            >
+              {busy === "publish" ? "Publicerar…" : "Publicera på Tradera"}
+            </Button>
+            {status?.userConnected === false && (
+              <p className="text-muted-foreground text-xs">
+                Anslut ett Tradera-konto i Diagnostik först.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {draft && <HandoffPanel fields={toListingFields(draft)} image={image} />}
 
       <Diagnostics
@@ -420,6 +500,9 @@ function StatusBar({ status }: { status: TraderaStatus | null }) {
       <Badge variant={status.appConfigured ? "default" : "destructive"}>
         App-nyckel {status.appConfigured ? "konfigurerad" : "saknas"}
       </Badge>
+      {status.appConfigured && (status.appPoolSize ?? 0) > 1 && (
+        <Badge variant="secondary">{status.appPoolSize} nycklar (pool)</Badge>
+      )}
       <Badge variant={status.sandbox ? "secondary" : "destructive"}>
         {status.sandbox ? "Sandbox" : "PRODUKTION"}
       </Badge>

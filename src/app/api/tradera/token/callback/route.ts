@@ -14,41 +14,47 @@ import type { TraderaUserAuth } from "@/lib/tradera/types";
 export const dynamic = "force-dynamic";
 
 /**
- * Token-login callback. Tradera redirects here after the user authorizes the app.
- * We read the returned user id, exchange (userId, secret) for a token via
- * FetchToken, and persist it.
+ * Token-login callback. Tradera redirects here (the app's "Accept Return URL")
+ * after the user authorizes the app. Two modes:
+ *   - "Display token on return URL" OFF (default): we get a userId and exchange
+ *     (userId, secret) for a token via FetchToken.
+ *   - "Display token on return URL" ON: the token is on the URL directly.
  *
- * VERIFY the exact name of the user-id query parameter Tradera appends.
+ * VERIFY the exact query-parameter names Tradera appends on first live run.
  */
 export async function GET(request: NextRequest) {
   try {
     const params = request.nextUrl.searchParams;
-    const userIdParam =
-      params.get("userId") ?? params.get("uid") ?? params.get("UserId");
-    const userId = Number(userIdParam);
+    const userId = Number(
+      params.get("userId") ?? params.get("uid") ?? params.get("UserId"),
+    );
+    const directToken =
+      params.get("token") ?? params.get("authToken") ?? params.get("Token");
 
     if (!Number.isInteger(userId) || userId <= 0) {
       return errorResponse(
         new Error(
-          "Token callback is missing a valid user id. Verify the redirect parameter name Tradera uses, then retry the connect flow.",
+          "Token-callbacken saknar ett giltigt userId. Kontrollera Accept Return URL i Tradera-portalen och försök igen.",
         ),
       );
     }
 
-    const secret = await readSecretCookie();
-    if (!secret) {
-      return errorResponse(
-        new Error("Missing secret cookie — restart the Tradera connect flow."),
-      );
+    let token = directToken;
+    let expiresAt: string | undefined;
+
+    if (!token) {
+      const secret = await readSecretCookie();
+      if (!secret) {
+        return errorResponse(
+          new Error("Saknar secret-cookie — starta om Tradera-anslutningen."),
+        );
+      }
+      const fetched = await fetchToken(userId, secret);
+      token = fetched.token;
+      expiresAt = fetched.hardExpirationTime;
     }
 
-    const { token, hardExpirationTime } = await fetchToken(userId, secret);
-    const auth: TraderaUserAuth = {
-      userId,
-      token,
-      expiresAt: hardExpirationTime,
-    };
-
+    const auth: TraderaUserAuth = { userId, token, expiresAt };
     const res = NextResponse.redirect(
       new URL("/?tradera=connected", getAppBaseUrl()),
     );

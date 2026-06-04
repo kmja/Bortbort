@@ -96,6 +96,7 @@ export async function searchComparables(
     service: "search",
     operation: "Search",
     bodyInnerXml,
+    rotateApp: true,
     signal: opts.signal,
   });
 

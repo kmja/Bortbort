@@ -44,11 +44,10 @@ export function HandoffPanel({ fields, image }: HandoffPanelProps) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Steg 3 · Dela & publicera</CardTitle>
+        <CardTitle>Steg 4 · Dela till Blocket &amp; Facebook</CardTitle>
         <CardDescription>
-          Tradera kan publiceras via API (se Diagnostik). Blocket och Facebook
-          saknar öppet API – kopiera texten, öppna deras formulär och ladda upp
-          bilderna manuellt.
+          Blocket och Facebook saknar öppet annons-API – kopiera texten, öppna
+          deras formulär och ladda upp bilderna manuellt.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">

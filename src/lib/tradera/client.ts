@@ -29,6 +29,7 @@ export async function getOfficialTime(signal?: AbortSignal): Promise<string> {
   const res = await callTradera<Record<string, unknown>>({
     service: "public",
     operation: "GetOfficialTime",
+    rotateApp: true,
     signal,
   });
   const value = res?.GetOfficialTimeResult;
@@ -37,11 +38,10 @@ export async function getOfficialTime(signal?: AbortSignal): Promise<string> {
 
 /**
  * Builds the URL the user is redirected to in order to authorize this app.
- * After they approve, Tradera redirects back to the app's configured return URL
- * (set in the developer portal) and you exchange the secret key for a token.
- *
- * VERIFY query-parameter names (appId / pkey / skey) against:
- *   https://api.tradera.com/v3/documentation/static.aspx?page=UsingRestrictedService
+ * The base path (/token-login) and params (appId/pkey/skey) are confirmed from
+ * the Tradera developer portal's generated "Authorization URL". The Accept/Reject
+ * Return URLs are configured in the portal (not passed here); after the user
+ * approves, Tradera redirects to the Accept Return URL.
  */
 export function getTokenLoginUrl(secretKey: string): string {
   const { appId } = getAppCredentials();

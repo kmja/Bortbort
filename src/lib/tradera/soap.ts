@@ -5,6 +5,7 @@ import { XMLParser } from "fast-xml-parser";
 import {
   getAppCredentials,
   isSandbox,
+  pickAppCredentials,
   serviceUrl,
   TRADERA_NS,
   type TraderaAppCredentials,
@@ -86,7 +87,6 @@ export function buildEnvelope({
   const configurationHeader =
     `<ConfigurationHeader xmlns="${TRADERA_NS}">` +
     `<Sandbox>${sandbox ? "true" : "false"}</Sandbox>` +
-    `<MaxResultAge>0</MaxResultAge>` +
     `</ConfigurationHeader>`;
 
   const authorizationHeader = userAuth
@@ -121,6 +121,12 @@ export interface CallOptions {
   userAuth?: TraderaUserAuth;
   /** Override the SOAPAction header. Defaults to `${TRADERA_NS}/${operation}`. */
   soapAction?: string;
+  /**
+   * Rotate across the app-credential pool for this call. Use only for public
+   * read calls — RestrictedService calls must use the primary app the user token
+   * belongs to, so leave this false there.
+   */
+  rotateApp?: boolean;
   /** Abort/timeout signal. */
   signal?: AbortSignal;
 }
@@ -137,7 +143,7 @@ export function xmlElement(name: string, value: string | number | undefined | nu
  * TraderaConfigError propagate when credentials are missing.
  */
 export async function callTradera<T = unknown>(opts: CallOptions): Promise<T> {
-  const app = getAppCredentials();
+  const app = opts.rotateApp ? pickAppCredentials() : getAppCredentials();
   const envelope = buildEnvelope({
     operation: opts.operation,
     bodyInnerXml: opts.bodyInnerXml,

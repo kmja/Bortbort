@@ -5,9 +5,11 @@ Photograph an item → get an AI-drafted, priced Swedish listing → post it to
 Marketplace**. (Auto-posting is Tradera-only — Blocket and FB don't offer open
 listing APIs, so those are a copy/deep-link handoff by design.)
 
-The end-to-end flow is in place — **capture → identify → editable draft →
-price → share** — with the Tradera auth + pricing integrations built against the
-documented API shape (not yet verified live; see below).
+The end-to-end flow is in place — **capture → identify → editable draft → price
+→ publish to Tradera / hand off to Blocket & Facebook**. Tradera credentials are
+configured (with multi-app rate-limit pooling) and the token-login URL is
+verified against the developer portal. The live SOAP calls still need a network
+that can reach `api.tradera.com` to fully confirm — see "Going live (Tradera)".
 
 ## Tech stack
 
@@ -20,32 +22,29 @@ documented API shape (not yet verified live; see below).
 | Area | State |
 | --- | --- |
 | Project scaffold, UI, build, typecheck, lint | ✅ Verified locally |
-| Route handlers + typed Tradera SOAP client | ✅ Written & compiling |
-| Capture → identify → editable draft → share flow (UI) | ✅ Verified locally |
+| Capture → identify → editable draft → price → share flow (UI) | ✅ Verified locally |
+| Tradera config + **multi-app key pooling** | ✅ Verified locally (status reports the pool size) |
+| Tradera token-login URL | ✅ Verified — generated URL matches the portal's Authorization URL byte-for-byte |
 | Blocket / Facebook handoff (copy text, deep-link, download photo) | ✅ Client-side, works now |
 | Anthropic identify/draft route (`/api/identify`) | ✅ Functional with a real `ANTHROPIC_API_KEY` (defaults to cheap Haiku 4.5) |
-| Tradera pricing query (`/api/tradera/price`) | ⚠️ Built; untested live. Uses **active asking** prices, not sold — see below |
-| Live Tradera calls (`ping`, token flow, `AddItem`, `Search`) | ⚠️ **Untested against the live API** — see below |
+| Tradera pricing query (`/api/tradera/price`) | ⚠️ Built; uses **active asking** prices, not sold — see below |
+| Live Tradera SOAP (`GetOfficialTime`, `Search`, `FetchToken`, `AddItem`) | ⚠️ **Not yet confirmed live** — build env can't reach `api.tradera.com` |
 
-**Honest status on the Tradera spike.** The Tradera Developer API is a
-SOAP/ASMX API (`https://api.tradera.com/v3/*.asmx`). The integration here is
-built to the documented shape — `AuthenticationHeader` (AppId/AppKey) +
-`AuthorizationHeader` (UserId/Token), `GetOfficialTime` as the smoke test, and
-`RestrictedService.AddItem` for the test listing — but it has **not** been run
-against the live API yet, for two reasons:
+**Honest status on the Tradera integration.** The Tradera Developer API is a
+SOAP/ASMX API (`https://api.tradera.com/v3/*.asmx`). Real credentials are now
+configured and the token-login URL is confirmed against the portal. What's still
+**unconfirmed** is the live SOAP wire format, because **the build environment's
+network policy blocks `api.tradera.com`** (every call returns "Host not in
+allowlist"). A normal machine or deployment has no such restriction.
 
-1. It requires **real developer credentials** (an app registered at
-   <https://api.tradera.com/>), which only you can create.
-2. The original build environment's network policy blocked `api.tradera.com`, so
-   a live call couldn't be made from there. A normal deployment has no such
-   restriction.
+These spots are reconstructed from docs and marked with `VERIFY:` comments — the
+first live run is their real test (routes surface the raw SOAP fault + HTTP
+status so you can iterate fast):
 
-Where the wire format is reconstructed from documentation rather than verified
-against the live WSDL, the code is marked with `VERIFY:` comments (e.g. the
-`FetchToken` result shape, the `AddItem` field names, the token-login query
-params, and the sandbox toggle). Treat the first live run as the real test of
-the spike — the routes return the raw SOAP fault and HTTP status so you can
-iterate quickly.
+- `FetchToken` result shape (token field name / expiry)
+- `AddItem` field/wrapper names and which are required
+- `SearchService.Search` item price fields (asking-price comps today)
+- whether `ConfigurationHeader.Sandbox` is the correct sandbox toggle
 
 ## Getting started
 
@@ -60,15 +59,33 @@ The home page is the actual flow:
 1. **Steg 1 — Fota & identifiera**: upload a photo (+ optional hint) →
    `POST /api/identify` (needs `ANTHROPIC_API_KEY`) → a structured draft.
 2. **Steg 2 — Granska utkast**: every field is editable; **Hämta prisförslag**
-   calls `GET /api/tradera/price` and fills the price (needs the Tradera app key).
-3. **Steg 3 — Dela & publicera**: copy title/description, open Blocket or
-   Facebook Marketplace, and download the photo to re-attach.
+   calls `GET /api/tradera/price` and fills the price.
+3. **Steg 3 — Publicera på Tradera (API)**: enter a Tradera category id and
+   publish the current draft via `POST /api/tradera/list` (`AddItem`). Needs a
+   connected account.
+4. **Steg 4 — Dela till Blocket & Facebook**: copy title/description, open their
+   create page, and download the photo to re-attach.
 
-A collapsible **Diagnostik & Tradera-spik** section holds the raw spike tools:
+A collapsible **Diagnostik & Tradera-spik** section holds the raw tools:
 connection test (`ping`), the token-login flow, and the hardcoded `AddItem` test
 listing.
 
 See [`.env.example`](./.env.example) for every variable and where to get it.
+
+## Going live (Tradera)
+
+1. **Credentials & pooling.** Tradera limits each app to ~100 calls/endpoint/24h.
+   Configure several registered apps — the **primary** (`TRADERA_APP_ID`) handles
+   the token-login flow + `AddItem`; extras (`TRADERA_APP_ID_2`, `_3`, …) are
+   rotated automatically for public read calls (`GetOfficialTime`, `Search`),
+   multiplying read headroom. The status bar shows the pool size.
+2. **Accept Return URL.** In each app's portal page, set **Accept Return URL** to
+   `<APP_BASE_URL>/api/tradera/token/callback`. Tradera generally wants a public
+   HTTPS URL, so `localhost` may be rejected — deploy (e.g. Vercel) or use a
+   tunnel, and set `APP_BASE_URL` to match. Then click **Anslut Tradera-konto**.
+3. **Sandbox.** `TRADERA_SANDBOX=true` (default) keeps you off the live
+   marketplace. Read-only `Search` is safe against production — set it to `false`
+   to get real pricing comparables.
 
 ## Project layout
 
@@ -83,6 +100,7 @@ src/
         token/start/route.ts     # begin token-login redirect
         token/callback/route.ts  # FetchToken -> store user token
         test-listing/route.ts    # AddItem — the hardcoded test listing
+        list/route.ts            # AddItem — publishes the current draft
         price/route.ts           # price suggestion from Tradera comparables
       identify/route.ts          # Anthropic vision -> structured Swedish draft
   lib/
@@ -104,10 +122,10 @@ src/
   caps confidence and labels the basis honestly. The open task is verifying
   whether `SearchService.SearchAdvanced` can return ended/sold comparables —
   marked `VERIFY` in `src/lib/tradera/pricing.ts`.
-- Build order from here: confirm the Tradera auth + AddItem spike live → verify
-  sold-data for the pricing query → post the *current* draft to Tradera via
-  `AddItem` (needs AI-category → Tradera-category-id mapping) → polish. The
-  Blocket/FB handoff (copy + deep-link) is done.
+- Build order from here: confirm the live SOAP calls (auth, `Search`, `AddItem`)
+  on a network that can reach Tradera → verify sold-data for pricing → add
+  category discovery (`GetCategories`) so the Tradera category id is picked, not
+  typed. Draft→`AddItem` publishing and the Blocket/FB handoff are done.
 
 > Token storage in this spike uses an httpOnly cookie, which is fine for a
 > single-user dev setup. A real deployment should keep user tokens in a
