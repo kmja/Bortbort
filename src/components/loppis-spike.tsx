@@ -12,6 +12,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
@@ -35,7 +36,7 @@ interface ResultPanel {
   data: unknown;
 }
 
-type Busy = "ping" | "listing" | "identify" | null;
+type Busy = "ping" | "listing" | "identify" | "price" | null;
 
 function readAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -60,6 +61,8 @@ export function LoppisSpike() {
   const [busy, setBusy] = useState<Busy>(null);
   const [result, setResult] = useState<ResultPanel | null>(null);
   const [hint, setHint] = useState("");
+  const [priceQuery, setPriceQuery] = useState("");
+  const [priceCategory, setPriceCategory] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const refreshStatus = useCallback(async () => {
@@ -147,6 +150,38 @@ export function LoppisSpike() {
     }
   }
 
+  async function getPrice() {
+    if (!priceQuery.trim()) {
+      toast.error("Ange en sökterm.");
+      return;
+    }
+    setBusy("price");
+    try {
+      const params = new URLSearchParams({ q: priceQuery.trim() });
+      if (priceCategory.trim()) params.set("categoryId", priceCategory.trim());
+      const res = await fetch(`/api/tradera/price?${params.toString()}`, {
+        cache: "no-store",
+      });
+      const data = await res.json();
+      setResult({ title: `GET /api/tradera/price?${params.toString()}`, data });
+      if (data.ok) {
+        if (data.suggested) {
+          toast.success(
+            `Förslag: ${data.suggested.low}–${data.suggested.high} kr (${data.confidence}, ${data.count} comps)`,
+          );
+        } else {
+          toast.message("Inga jämförbara annonser hittades.");
+        }
+      } else {
+        toast.error(data.error ?? "Prisförslaget misslyckades.");
+      }
+    } catch {
+      toast.error("Nätverksfel vid prisförslag.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-6">
       <StatusBar status={status} />
@@ -227,6 +262,41 @@ export function LoppisSpike() {
             disabled={busy !== null}
           >
             {busy === "identify" ? "Analyserar bild…" : "Välj foto & skapa utkast"}
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>4 · Prisförslag (Tradera-comps)</CardTitle>
+          <CardDescription>
+            Hämtar jämförbara annonser via SearchService och föreslår ett
+            prisintervall (p25–p75). Kräver bara app-nyckeln. OBS: aktiva
+            utropspriser, inte sålda – konfidensen hålls därför medvetet låg/medel.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="price-query">Sökterm</Label>
+            <Input
+              id="price-query"
+              placeholder="T.ex. 'IKEA Poäng fåtölj'"
+              value={priceQuery}
+              onChange={(e) => setPriceQuery(e.target.value)}
+            />
+          </div>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="price-category">Kategori-id (valfritt)</Label>
+            <Input
+              id="price-category"
+              inputMode="numeric"
+              placeholder="t.ex. 1612"
+              value={priceCategory}
+              onChange={(e) => setPriceCategory(e.target.value)}
+            />
+          </div>
+          <Button onClick={getPrice} disabled={busy !== null}>
+            {busy === "price" ? "Hämtar comps…" : "Hämta prisförslag"}
           </Button>
         </CardContent>
       </Card>

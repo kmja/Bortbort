@@ -21,8 +21,9 @@ Anthropic identify/draft route wired in as the next satisfying bit.
 | --- | --- |
 | Project scaffold, UI, build, typecheck, lint | ✅ Verified locally |
 | Route handlers + typed Tradera SOAP client | ✅ Written & compiling |
-| Anthropic identify/draft route (`/api/identify`) | ✅ Functional with a real `ANTHROPIC_API_KEY` |
-| Live Tradera calls (`ping`, token flow, `AddItem`) | ⚠️ **Untested against the live API** — see below |
+| Anthropic identify/draft route (`/api/identify`) | ✅ Functional with a real `ANTHROPIC_API_KEY` (defaults to cheap Haiku 4.5) |
+| Tradera pricing query (`/api/tradera/price`) | ⚠️ Built; untested live. Uses **active asking** prices, not sold — see below |
+| Live Tradera calls (`ping`, token flow, `AddItem`, `Search`) | ⚠️ **Untested against the live API** — see below |
 
 **Honest status on the Tradera spike.** The Tradera Developer API is a
 SOAP/ASMX API (`https://api.tradera.com/v3/*.asmx`). The integration here is
@@ -58,6 +59,7 @@ The home page is a small console for driving the spike:
 2. **Connect Tradera account** → token-login flow (`/api/tradera/token/start` → `…/callback`)
 3. **Post test listing** → `POST /api/tradera/test-listing` (needs a connected user + `TRADERA_TEST_CATEGORY_ID`)
 4. **Identify & draft** → `POST /api/identify` (needs `ANTHROPIC_API_KEY`)
+5. **Price suggestion** → `GET /api/tradera/price?q=<term>` (needs only the app key)
 
 See [`.env.example`](./.env.example) for every variable and where to get it.
 
@@ -74,9 +76,10 @@ src/
         token/start/route.ts     # begin token-login redirect
         token/callback/route.ts  # FetchToken -> store user token
         test-listing/route.ts    # AddItem — the hardcoded test listing
+        price/route.ts           # price suggestion from Tradera comparables
       identify/route.ts          # Anthropic vision -> structured Swedish draft
   lib/
-    tradera/                     # config, types, SOAP transport, client, auth
+    tradera/                     # config, types, SOAP transport, client, auth, pricing
     anthropic/                   # client + identify/draft logic
     api-response.ts              # error -> JSON mapping for routes
   components/
@@ -87,10 +90,13 @@ src/
 ## Notes & next steps
 
 - **Don't scrape Blocket or Facebook.** They're handoff targets, not data sources.
-- **Sold ≠ asking prices.** Real pricing should come from Tradera completed/sold
-  comparables (next milestone); the current AI price is a clearly-labelled guess.
-- Build order from here: confirm the Tradera auth + AddItem spike live → pricing
-  query against Tradera comparables → richer capture/draft UX → Blocket/FB
+- **Sold ≠ asking prices.** `/api/tradera/price` is scaffolded but currently
+  reads **active** listings (asking prices) via `SearchService.Search`, so it
+  caps confidence and labels the basis honestly. The open task is verifying
+  whether `SearchService.SearchAdvanced` can return ended/sold comparables —
+  marked `VERIFY` in `src/lib/tradera/pricing.ts`.
+- Build order from here: confirm the Tradera auth + AddItem spike live → verify
+  sold-data for the pricing query → richer capture/draft UX → Blocket/FB
   prefilled handoff → polish.
 
 > Token storage in this spike uses an httpOnly cookie, which is fine for a

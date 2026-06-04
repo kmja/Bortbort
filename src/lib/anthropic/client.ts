@@ -10,8 +10,12 @@ export class AnthropicConfigError extends Error {
   }
 }
 
-/** Model used for identification + drafting. Override with ANTHROPIC_MODEL. */
-export const DRAFT_MODEL = process.env.ANTHROPIC_MODEL ?? "claude-opus-4-8";
+/**
+ * Model used for identification + drafting. Defaults to the cheapest
+ * vision-capable Claude model (Haiku 4.5); set ANTHROPIC_MODEL to
+ * claude-sonnet-4-6 or claude-opus-4-8 for higher-quality drafts at higher cost.
+ */
+export const DRAFT_MODEL = process.env.ANTHROPIC_MODEL ?? "claude-haiku-4-5";
 
 let cached: Anthropic | null = null;
 

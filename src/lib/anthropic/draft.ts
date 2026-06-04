@@ -76,18 +76,19 @@ Riktlinjer:
 
 /**
  * Identifies the item in the photo and returns a structured Swedish listing draft.
- * Uses adaptive thinking + structured outputs; the stable system prompt carries a
- * cache breakpoint so it can be reused once the prefix is large enough to cache.
+ *
+ * Uses structured outputs (zod) with a cache breakpoint on the stable system
+ * prompt. Thinking and the `effort` parameter are intentionally omitted so the
+ * same request is valid on the cheapest model (Haiku 4.5, which rejects
+ * `effort`) as well as Sonnet/Opus — the JSON schema does the heavy lifting.
  */
 export async function identifyAndDraft(input: IdentifyInput): Promise<ListingDraft> {
   const client = getAnthropicClient();
 
   const message = await client.messages.parse({
     model: DRAFT_MODEL,
-    max_tokens: 4000,
-    thinking: { type: "adaptive" },
+    max_tokens: 2000,
     output_config: {
-      effort: "medium",
       format: zodOutputFormat(ListingDraftSchema),
     },
     system: [
