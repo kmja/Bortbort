@@ -136,6 +136,16 @@ export async function suggestPrice(
   opts: ComparablesQuery,
 ): Promise<PriceSuggestion> {
   const comparables = await searchComparables(opts);
+  return summarizeComparables(comparables);
+}
+
+/**
+ * Pure summarization of comparables into a price suggestion (no network).
+ * Confidence is capped at "medium" because the comps are asking prices.
+ */
+export function summarizeComparables(
+  comparables: ComparableItem[],
+): PriceSuggestion {
   const basis: PriceBasis = "active-asking";
   const prices = comparables.map((c) => c.price).sort((a, b) => a - b);
   const count = prices.length;

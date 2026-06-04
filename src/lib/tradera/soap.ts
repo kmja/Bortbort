@@ -173,6 +173,19 @@ export async function callTradera<T = unknown>(opts: CallOptions): Promise<T> {
   }
 
   const text = await res.text();
+  return parseSoapResponse(text, res.status, opts.operation) as T;
+}
+
+/**
+ * Parses a Tradera ASMX SOAP response: returns the `${operation}Response` node,
+ * or throws {@link TraderaApiError} on a SOAP fault or non-2xx status. Pure and
+ * testable — kept separate from the network call.
+ */
+export function parseSoapResponse(
+  text: string,
+  httpStatus: number,
+  operation: string,
+): unknown {
   const root = asRecord(parser.parse(text));
   const envelopeNode = asRecord(root?.Envelope);
   const body = asRecord(envelopeNode?.Body);
@@ -185,28 +198,27 @@ export async function callTradera<T = unknown>(opts: CallOptions): Promise<T> {
     const message =
       (typeof f?.faultstring === "string" && f.faultstring) ||
       (typeof reason?.Text === "string" && reason.Text) ||
-      `Tradera SOAP fault on ${opts.operation}`;
+      `Tradera SOAP fault on ${operation}`;
     throw new TraderaApiError(message, {
       soapFault: fault,
-      httpStatus: res.status,
+      httpStatus,
       raw: text,
     });
   }
 
-  if (!res.ok) {
+  if (httpStatus < 200 || httpStatus >= 300) {
     throw new TraderaApiError(
-      `Tradera ${opts.operation} failed with HTTP ${res.status}`,
-      { httpStatus: res.status, raw: text },
+      `Tradera ${operation} failed with HTTP ${httpStatus}`,
+      { httpStatus, raw: text },
     );
   }
 
   if (!body) {
     throw new TraderaApiError(
-      `Could not parse Tradera response for ${opts.operation}`,
-      { httpStatus: res.status, raw: text },
+      `Could not parse Tradera response for ${operation}`,
+      { httpStatus, raw: text },
     );
   }
 
-  const responseNode = body[`${opts.operation}Response`];
-  return (responseNode ?? body) as T;
+  return body[`${operation}Response`] ?? body;
 }

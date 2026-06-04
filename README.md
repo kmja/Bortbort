@@ -104,6 +104,21 @@ latency to Swedish users and Tradera — change or remove `regions` for your pla
    `https://<your-project>.vercel.app/api/tradera/token/callback` and click
    **Anslut Tradera-konto**.
 
+## Tests & CI
+
+The deterministic logic — SOAP envelope building + fault parsing, category
+flattening, price summarization, and marketplace text formatting — is covered by
+unit tests (Vitest). That's the slice that's verifiable without a live Tradera
+connection, so it pins those down and leaves only the wire-format `VERIFY:` spots
+to confirm on first live run.
+
+```bash
+npm test     # vitest run (colocated *.test.ts)
+```
+
+GitHub Actions (`.github/workflows/ci.yml`) runs typecheck → lint → tests → build
+on every push and PR. `GET /api/health` is a liveness probe for uptime checks.
+
 ## Project layout
 
 ```

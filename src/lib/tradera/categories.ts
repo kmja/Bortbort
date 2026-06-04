@@ -65,6 +65,17 @@ function flatten(node: unknown, trail: string[], out: TraderaCategory[]): void {
 let cache: { at: number; data: TraderaCategory[] } | null = null;
 const TTL_MS = 1000 * 60 * 60 * 12;
 
+/**
+ * Pure flatten of a GetCategories result (the `GetCategoriesResponse` node, or
+ * its inner `GetCategoriesResult`) into a list of {id, name, path}. Testable.
+ */
+export function parseCategories(result: unknown): TraderaCategory[] {
+  const out: TraderaCategory[] = [];
+  const root = asRecord(result)?.GetCategoriesResult ?? result;
+  for (const top of asArray(root)) flatten(top, [], out);
+  return out;
+}
+
 export async function getCategoriesFlat(
   signal?: AbortSignal,
 ): Promise<TraderaCategory[]> {
@@ -77,10 +88,7 @@ export async function getCategoriesFlat(
     signal,
   });
 
-  const out: TraderaCategory[] = [];
-  const root = asRecord(res)?.GetCategoriesResult ?? res;
-  for (const top of asArray(root)) flatten(top, [], out);
-
-  cache = { at: Date.now(), data: out };
-  return out;
+  const data = parseCategories(res);
+  cache = { at: Date.now(), data };
+  return data;
 }
