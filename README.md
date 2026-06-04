@@ -5,9 +5,9 @@ Photograph an item → get an AI-drafted, priced Swedish listing → post it to
 Marketplace**. (Auto-posting is Tradera-only — Blocket and FB don't offer open
 listing APIs, so those are a copy/deep-link handoff by design.)
 
-This repository is at its **first milestone**: the project scaffold plus the
-**Tradera authentication spike** (the first thing to de-risk), with the
-Anthropic identify/draft route wired in as the next satisfying bit.
+The end-to-end flow is in place — **capture → identify → editable draft →
+price → share** — with the Tradera auth + pricing integrations built against the
+documented API shape (not yet verified live; see below).
 
 ## Tech stack
 
@@ -21,6 +21,8 @@ Anthropic identify/draft route wired in as the next satisfying bit.
 | --- | --- |
 | Project scaffold, UI, build, typecheck, lint | ✅ Verified locally |
 | Route handlers + typed Tradera SOAP client | ✅ Written & compiling |
+| Capture → identify → editable draft → share flow (UI) | ✅ Verified locally |
+| Blocket / Facebook handoff (copy text, deep-link, download photo) | ✅ Client-side, works now |
 | Anthropic identify/draft route (`/api/identify`) | ✅ Functional with a real `ANTHROPIC_API_KEY` (defaults to cheap Haiku 4.5) |
 | Tradera pricing query (`/api/tradera/price`) | ⚠️ Built; untested live. Uses **active asking** prices, not sold — see below |
 | Live Tradera calls (`ping`, token flow, `AddItem`, `Search`) | ⚠️ **Untested against the live API** — see below |
@@ -53,13 +55,18 @@ cp .env.example .env.local   # then fill in values
 npm run dev                  # http://localhost:3000
 ```
 
-The home page is a small console for driving the spike:
+The home page is the actual flow:
 
-1. **Test connection** → `GET /api/tradera/ping` (needs `TRADERA_APP_ID` + `TRADERA_APP_KEY`)
-2. **Connect Tradera account** → token-login flow (`/api/tradera/token/start` → `…/callback`)
-3. **Post test listing** → `POST /api/tradera/test-listing` (needs a connected user + `TRADERA_TEST_CATEGORY_ID`)
-4. **Identify & draft** → `POST /api/identify` (needs `ANTHROPIC_API_KEY`)
-5. **Price suggestion** → `GET /api/tradera/price?q=<term>` (needs only the app key)
+1. **Steg 1 — Fota & identifiera**: upload a photo (+ optional hint) →
+   `POST /api/identify` (needs `ANTHROPIC_API_KEY`) → a structured draft.
+2. **Steg 2 — Granska utkast**: every field is editable; **Hämta prisförslag**
+   calls `GET /api/tradera/price` and fills the price (needs the Tradera app key).
+3. **Steg 3 — Dela & publicera**: copy title/description, open Blocket or
+   Facebook Marketplace, and download the photo to re-attach.
+
+A collapsible **Diagnostik & Tradera-spik** section holds the raw spike tools:
+connection test (`ping`), the token-login flow, and the hardcoded `AddItem` test
+listing.
 
 See [`.env.example`](./.env.example) for every variable and where to get it.
 
@@ -68,7 +75,7 @@ See [`.env.example`](./.env.example) for every variable and where to get it.
 ```
 src/
   app/
-    page.tsx                     # spike console
+    page.tsx                     # landing + flow
     api/
       tradera/
         ping/route.ts            # GetOfficialTime smoke test (app-level auth)
@@ -81,9 +88,11 @@ src/
   lib/
     tradera/                     # config, types, SOAP transport, client, auth, pricing
     anthropic/                   # client + identify/draft logic
+    handoff.ts                   # Blocket/FB text formatting + create-page links
     api-response.ts              # error -> JSON mapping for routes
   components/
-    loppis-spike.tsx             # the console UI
+    loppis-app.tsx               # the capture -> draft -> price -> share flow
+    handoff-panel.tsx            # copy text / open marketplace / download photo
     ui/                          # shadcn/ui components
 ```
 
@@ -96,8 +105,9 @@ src/
   whether `SearchService.SearchAdvanced` can return ended/sold comparables —
   marked `VERIFY` in `src/lib/tradera/pricing.ts`.
 - Build order from here: confirm the Tradera auth + AddItem spike live → verify
-  sold-data for the pricing query → richer capture/draft UX → Blocket/FB
-  prefilled handoff → polish.
+  sold-data for the pricing query → post the *current* draft to Tradera via
+  `AddItem` (needs AI-category → Tradera-category-id mapping) → polish. The
+  Blocket/FB handoff (copy + deep-link) is done.
 
 > Token storage in this spike uses an httpOnly cookie, which is fine for a
 > single-user dev setup. A real deployment should keep user tokens in a
