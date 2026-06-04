@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { HandoffPanel } from "@/components/handoff-panel";
+import { CategoryPicker } from "@/components/category-picker";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -452,14 +453,10 @@ export function LoppisApp() {
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
             <div className="flex flex-col gap-2">
-              <Label htmlFor="tradera-category">Tradera kategori-id</Label>
-              <Input
-                id="tradera-category"
-                inputMode="numeric"
-                placeholder="t.ex. 1612"
+              <Label>Tradera-kategori</Label>
+              <CategoryPicker
                 value={traderaCategoryId}
-                onChange={(e) => setTraderaCategoryId(e.target.value)}
-                className="max-w-40"
+                onChange={setTraderaCategoryId}
               />
             </div>
             <Button

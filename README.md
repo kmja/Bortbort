@@ -87,6 +87,23 @@ See [`.env.example`](./.env.example) for every variable and where to get it.
    marketplace. Read-only `Search` is safe against production — set it to `false`
    to get real pricing comparables.
 
+## Deploy to Vercel
+
+The app is Vercel-ready. `vercel.json` pins the Stockholm region (`arn1`) for low
+latency to Swedish users and Tradera — change or remove `regions` for your plan.
+
+1. Import the repo at <https://vercel.com/new>. Next.js is auto-detected; the
+   committed `.npmrc` (`legacy-peer-deps`) keeps install happy under React 19.
+2. Add environment variables (Project Settings → Environment Variables):
+   - `TRADERA_APP_ID`, `TRADERA_APP_KEY`, `TRADERA_PUBLIC_KEY` (primary app)
+   - `TRADERA_APP_ID_2` / `…_KEY_2` / `…_PUBLIC_KEY_2`, `…_3` for the key pool
+   - `ANTHROPIC_API_KEY` (+ optional `ANTHROPIC_MODEL`)
+   - `TRADERA_SANDBOX` (`true`/`false`), `TRADERA_TEST_CATEGORY_ID` (optional)
+   - `APP_BASE_URL` is derived from the Vercel production URL automatically.
+3. Deploy, then set each Tradera app's **Accept Return URL** to
+   `https://<your-project>.vercel.app/api/tradera/token/callback` and click
+   **Anslut Tradera-konto**.
+
 ## Project layout
 
 ```
@@ -102,15 +119,17 @@ src/
         test-listing/route.ts    # AddItem — the hardcoded test listing
         list/route.ts            # AddItem — publishes the current draft
         price/route.ts           # price suggestion from Tradera comparables
+        categories/route.ts      # flattened category list for the picker
       identify/route.ts          # Anthropic vision -> structured Swedish draft
   lib/
-    tradera/                     # config, types, SOAP transport, client, auth, pricing
+    tradera/                     # config, types, SOAP, client, auth, pricing, categories
     anthropic/                   # client + identify/draft logic
     handoff.ts                   # Blocket/FB text formatting + create-page links
     api-response.ts              # error -> JSON mapping for routes
   components/
     loppis-app.tsx               # the capture -> draft -> price -> share flow
     handoff-panel.tsx            # copy text / open marketplace / download photo
+    category-picker.tsx          # searchable Tradera category picker
     ui/                          # shadcn/ui components
 ```
 
@@ -122,10 +141,10 @@ src/
   caps confidence and labels the basis honestly. The open task is verifying
   whether `SearchService.SearchAdvanced` can return ended/sold comparables —
   marked `VERIFY` in `src/lib/tradera/pricing.ts`.
-- Build order from here: confirm the live SOAP calls (auth, `Search`, `AddItem`)
-  on a network that can reach Tradera → verify sold-data for pricing → add
-  category discovery (`GetCategories`) so the Tradera category id is picked, not
-  typed. Draft→`AddItem` publishing and the Blocket/FB handoff are done.
+- Build order from here: confirm the live SOAP calls (auth, `Search`,
+  `GetCategories`, `AddItem`) on a network that can reach Tradera → verify
+  sold-data for pricing. Category discovery, draft→`AddItem` publishing, the
+  Blocket/FB handoff, and Vercel deploy config are all done.
 
 > Token storage in this spike uses an httpOnly cookie, which is fine for a
 > single-user dev setup. A real deployment should keep user tokens in a
