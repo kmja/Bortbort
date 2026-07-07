@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { VERSION_LABEL } from "@/lib/version";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -355,6 +356,9 @@ export function LoppisApp() {
               {status.userConnected ? `Tradera #${status.userId}` : "Inget konto"}
             </span>
           )}
+          <span className="ml-auto font-mono text-[10px] text-white/50">
+            {VERSION_LABEL}
+          </span>
         </div>
 
         {/* Analyzing overlay */}
@@ -534,6 +538,10 @@ export function LoppisApp() {
             )}
           </div>
         </details>
+
+        <p className="text-muted-foreground text-center font-mono text-[10px]">
+          {VERSION_LABEL}
+        </p>
       </div>
 
       {/* Fixed publish bar */}
