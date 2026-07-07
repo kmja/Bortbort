@@ -1,6 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server";
 
-import { errorResponse } from "@/lib/api-response";
 import {
   cookieOptions,
   readSecretCookie,
@@ -12,6 +11,14 @@ import { getAppBaseUrl } from "@/lib/tradera/config";
 import type { TraderaUserAuth } from "@/lib/tradera/types";
 
 export const dynamic = "force-dynamic";
+
+/** Redirect back into the app so the user always lands on a real page, never a JSON dead-end. */
+function backToApp(status: "connected" | "error", reason?: string): NextResponse {
+  const url = new URL("/", getAppBaseUrl());
+  url.searchParams.set("tradera", status);
+  if (reason) url.searchParams.set("reason", reason);
+  return NextResponse.redirect(url);
+}
 
 /**
  * Token-login callback. Tradera redirects here (the app's "Accept Return URL")
@@ -32,10 +39,11 @@ export async function GET(request: NextRequest) {
       params.get("token") ?? params.get("authToken") ?? params.get("Token");
 
     if (!Number.isInteger(userId) || userId <= 0) {
-      return errorResponse(
-        new Error(
-          "Token-callbacken saknar ett giltigt userId. Kontrollera Accept Return URL i Tradera-portalen och försök igen.",
-        ),
+      // The redirect reached us but without a userId — usually a param-name
+      // mismatch or a return URL that dropped the query string.
+      return backToApp(
+        "error",
+        "Tradera skickade tillbaka dig utan ett userId. Kontrollera Accept Return URL i portalen.",
       );
     }
 
@@ -45,8 +53,9 @@ export async function GET(request: NextRequest) {
     if (!token) {
       const secret = await readSecretCookie();
       if (!secret) {
-        return errorResponse(
-          new Error("Saknar secret-cookie — starta om Tradera-anslutningen."),
+        return backToApp(
+          "error",
+          "Secret-cookien saknas (gick den ut, eller blockerar webbläsaren cookies?). Starta om anslutningen.",
         );
       }
       const fetched = await fetchToken(userId, secret);
@@ -55,9 +64,7 @@ export async function GET(request: NextRequest) {
     }
 
     const auth: TraderaUserAuth = { userId, token, expiresAt };
-    const res = NextResponse.redirect(
-      new URL("/?tradera=connected", getAppBaseUrl()),
-    );
+    const res = backToApp("connected");
     res.cookies.set(
       TRADERA_TOKEN_COOKIE,
       JSON.stringify(auth),
@@ -66,6 +73,7 @@ export async function GET(request: NextRequest) {
     res.cookies.set(TRADERA_SECRET_COOKIE, "", cookieOptions(0));
     return res;
   } catch (err) {
-    return errorResponse(err);
+    const message = err instanceof Error ? err.message : "Okänt fel vid token-hämtning.";
+    return backToApp("error", message);
   }
 }

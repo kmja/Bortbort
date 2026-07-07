@@ -101,8 +101,20 @@ export function LoppisApp() {
   // Status + deep-link toast on mount
   useEffect(() => {
     fetchTraderaStatus().then((s) => { if (s) setStatus(s); });
-    if (new URLSearchParams(window.location.search).get("tradera") === "connected") {
+    const q = new URLSearchParams(window.location.search);
+    const tradera = q.get("tradera");
+    if (tradera === "connected") {
       toast.success("Tradera-kontot är anslutet.");
+    } else if (tradera === "denied") {
+      toast.error("Du nekade åtkomst i Tradera. Ingen anslutning gjordes.");
+    } else if (tradera === "error") {
+      toast.error(q.get("reason") ?? "Anslutningen till Tradera misslyckades.", {
+        duration: 12000,
+      });
+    }
+    // Strip the query params so a refresh doesn't re-fire the toast.
+    if (tradera) {
+      window.history.replaceState({}, "", window.location.pathname);
     }
   }, []);
 
