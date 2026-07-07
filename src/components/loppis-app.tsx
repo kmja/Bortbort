@@ -73,6 +73,7 @@ export function LoppisApp() {
   const [aiMeta, setAiMeta] = useState<AiMeta | null>(null);
   const [traderaCategoryId, setTraderaCategoryId] = useState("");
   const [diag, setDiag] = useState<{ title: string; data: unknown } | null>(null);
+  const [connectError, setConnectError] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -99,24 +100,30 @@ export function LoppisApp() {
     };
   }, [appState, noCam]);
 
-  // Status + deep-link toast on mount
+  // Status + token-login redirect result on mount
   useEffect(() => {
-    fetchTraderaStatus().then((s) => { if (s) setStatus(s); });
+    let active = true;
+    fetchTraderaStatus().then((s) => { if (active && s) setStatus(s); });
+
     const q = new URLSearchParams(window.location.search);
     const tradera = q.get("tradera");
-    if (tradera === "connected") {
-      toast.success("Tradera-kontot är anslutet.");
-    } else if (tradera === "denied") {
-      toast.error("Du nekade åtkomst i Tradera. Ingen anslutning gjordes.");
-    } else if (tradera === "error") {
-      toast.error(q.get("reason") ?? "Anslutningen till Tradera misslyckades.", {
-        duration: 12000,
-      });
-    }
-    // Strip the query params so a refresh doesn't re-fire the toast.
     if (tradera) {
+      // Strip the query params so a refresh doesn't re-surface the message.
       window.history.replaceState({}, "", window.location.pathname);
+      if (tradera === "connected") {
+        toast.success("Tradera-kontot är anslutet.");
+      } else {
+        // Persist as an on-screen banner — a toast vanishes before it can be read on
+        // mobile. Deferred to a callback so we don't setState synchronously in the effect.
+        const reason =
+          tradera === "denied"
+            ? "Du nekade åtkomst i Tradera. Ingen anslutning gjordes."
+            : q.get("reason") ?? "Anslutningen till Tradera misslyckades.";
+        Promise.resolve().then(() => { if (active) setConnectError(reason); });
+      }
     }
+
+    return () => { active = false; };
   }, []);
 
   // ── Camera capture ────────────────────────────────────────────────────────
@@ -360,6 +367,25 @@ export function LoppisApp() {
             {VERSION_LABEL}
           </span>
         </div>
+
+        {/* Persistent connection-error banner (survives so it can be read on mobile) */}
+        {connectError && (
+          <div className="absolute inset-x-3 top-14 z-30 rounded-lg bg-red-600/95 p-3 text-white shadow-lg backdrop-blur-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold">Tradera-anslutning misslyckades</p>
+                <p className="mt-1 text-xs break-words text-white/90">{connectError}</p>
+              </div>
+              <button
+                onClick={() => setConnectError(null)}
+                aria-label="Stäng"
+                className="shrink-0 text-lg leading-none text-white/80 active:text-white"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Analyzing overlay */}
         {appState === "analyzing" && (

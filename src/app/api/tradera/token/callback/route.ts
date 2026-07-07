@@ -7,7 +7,7 @@ import {
   TRADERA_TOKEN_COOKIE,
 } from "@/lib/tradera/auth";
 import { fetchToken } from "@/lib/tradera/client";
-import { getAppBaseUrl } from "@/lib/tradera/config";
+import { getAppBaseUrl, isSandbox } from "@/lib/tradera/config";
 import type { TraderaUserAuth } from "@/lib/tradera/types";
 
 export const dynamic = "force-dynamic";
@@ -40,10 +40,13 @@ export async function GET(request: NextRequest) {
 
     if (!Number.isInteger(userId) || userId <= 0) {
       // The redirect reached us but without a userId — usually a param-name
-      // mismatch or a return URL that dropped the query string.
+      // mismatch or a return URL that dropped the query string. Echo back the
+      // param names Tradera actually sent so we can map them correctly.
+      const keys = [...params.keys()];
+      const received = keys.length ? keys.join(", ") : "inga parametrar alls";
       return backToApp(
         "error",
-        "Tradera skickade tillbaka dig utan ett userId. Kontrollera Accept Return URL i portalen.",
+        `Callbacken kördes men fick inget userId. Parametrar Tradera skickade: ${received}. Kontrollera Accept Return URL i portalen.`,
       );
     }
 
@@ -74,6 +77,6 @@ export async function GET(request: NextRequest) {
     return res;
   } catch (err) {
     const message = err instanceof Error ? err.message : "Okänt fel vid token-hämtning.";
-    return backToApp("error", message);
+    return backToApp("error", `${message} (läge: ${isSandbox() ? "sandbox" : "produktion"})`);
   }
 }
