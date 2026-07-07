@@ -84,9 +84,12 @@ export function buildEnvelope({
     `<AppKey>${escapeXml(app.appKey)}</AppKey>` +
     `</AuthenticationHeader>`;
 
+  // Tradera's ConfigurationHeader types Sandbox as an integer (0/1), NOT a bool.
+  // Sending "true"/"false" makes the .NET deserializer throw
+  // "input string 'false' was not in a correct format" and rejects the whole request.
   const configurationHeader =
     `<ConfigurationHeader xmlns="${TRADERA_NS}">` +
-    `<Sandbox>${sandbox ? "true" : "false"}</Sandbox>` +
+    `<Sandbox>${sandbox ? 1 : 0}</Sandbox>` +
     `</ConfigurationHeader>`;
 
   const authorizationHeader = userAuth

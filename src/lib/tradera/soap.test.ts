@@ -21,7 +21,7 @@ describe("buildEnvelope", () => {
     const env = buildEnvelope({ operation: "GetOfficialTime", app, sandbox: true });
     expect(env).toContain("<AppId>6079</AppId>");
     expect(env).toContain("<AppKey>k&amp;y</AppKey>");
-    expect(env).toContain("<Sandbox>true</Sandbox>");
+    expect(env).toContain("<Sandbox>1</Sandbox>");
     expect(env).toContain('<GetOfficialTime xmlns="http://api.tradera.com" />');
     expect(env).not.toContain("AuthorizationHeader");
   });
@@ -37,7 +37,7 @@ describe("buildEnvelope", () => {
     expect(env).toContain("<AuthorizationHeader");
     expect(env).toContain("<UserId>1</UserId>");
     expect(env).toContain("<Token>t</Token>");
-    expect(env).toContain("<Sandbox>false</Sandbox>");
+    expect(env).toContain("<Sandbox>0</Sandbox>");
     expect(env).toContain("<x/></AddItem>");
   });
 });

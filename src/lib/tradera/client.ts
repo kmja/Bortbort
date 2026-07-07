@@ -3,6 +3,7 @@ import "server-only";
 import {
   getAppCredentials,
   getPublicKey,
+  isSandbox,
   TRADERA_TOKEN_LOGIN_URL,
 } from "./config";
 import { callTradera, xmlElement } from "./soap";
@@ -50,6 +51,8 @@ export function getTokenLoginUrl(secretKey: string): string {
     pkey: getPublicKey(),
     skey: secretKey,
   });
+  // Sandbox mode requires the login page itself to run against the sandbox.
+  if (isSandbox()) params.set("sandbox", "1");
   return `${TRADERA_TOKEN_LOGIN_URL}?${params.toString()}`;
 }
 
