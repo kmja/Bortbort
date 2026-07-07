@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Camera, RefreshCw, RotateCcw } from "lucide-react";
+import { Camera, RotateCcw, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 
 import { CategoryPicker } from "@/components/category-picker";
@@ -17,7 +17,7 @@ import { VERSION_LABEL } from "@/lib/version";
 const SUPPORTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 
 type AppState = "camera" | "analyzing" | "draft";
-type Busy = "price" | "ping" | "listing" | "publish" | null;
+type Busy = "value" | "ping" | "listing" | "publish" | null;
 
 interface TraderaStatus {
   appConfigured: boolean;
@@ -32,13 +32,24 @@ interface EditableDraft {
   description: string;
   conditionNotes: string;
   keywords: string;
+  /** Opening / start price. */
   price: string;
+  /** Buy-it-now (Köp nu) price. Empty = auction only. */
+  buyout: string;
   priceMeta: string;
 }
 
 interface AiMeta {
   identificationConfidence: string;
   priceConfidence: string;
+}
+
+interface Valuation {
+  confidence: string;
+  reasoning: string;
+  basis: string;
+  soldCount: number;
+  activeCount: number;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -108,6 +119,12 @@ function clearSession() {
   }
 }
 
+function confidenceLabel(c: string): string {
+  if (c === "high") return "hög säkerhet";
+  if (c === "medium") return "medel säkerhet";
+  return "låg säkerhet";
+}
+
 // ── Component ────────────────────────────────────────────────────────────────
 
 export function LoppisApp() {
@@ -120,6 +137,7 @@ export function LoppisApp() {
   const [aiMeta, setAiMeta] = useState<AiMeta | null>(null);
   const [traderaCategoryId, setTraderaCategoryId] = useState("");
   const [categorySuggestion, setCategorySuggestion] = useState("");
+  const [valuation, setValuation] = useState<Valuation | null>(null);
   const [diag, setDiag] = useState<{ title: string; data: unknown } | null>(null);
   const [connectError, setConnectError] = useState<string | null>(null);
   // Gates the camera until we've checked for a restorable draft, so returning
@@ -236,9 +254,11 @@ export function LoppisApp() {
           conditionNotes: d.conditionNotes ?? "",
           keywords: (d.suggestedKeywords ?? []).join(", "),
           price: guess ? String(Math.round((guess.low + guess.high) / 2)) : "",
+          buyout: "",
           priceMeta: guess ? `AI-förslag ${guess.low}–${guess.high} kr` : "",
         });
         setCategorySuggestion(d.category ?? "");
+        setValuation(null);
         setAiMeta({
           identificationConfidence: d.identificationConfidence ?? "?",
           priceConfidence: d.priceConfidence ?? "?",
@@ -280,6 +300,7 @@ export function LoppisApp() {
     setImage(null);
     setTraderaCategoryId("");
     setCategorySuggestion("");
+    setValuation(null);
     setDiag(null);
     setAppState("camera");
   }
@@ -296,31 +317,46 @@ export function LoppisApp() {
     window.location.href = "/api/tradera/token/start";
   }
 
-  // ── Price fetch ───────────────────────────────────────────────────────────
+  // ── Valuation ─────────────────────────────────────────────────────────────
 
-  async function getPrice() {
+  async function valuate() {
     if (!draft) return;
     const query = draft.title.trim() || draft.keywords.trim();
-    if (!query) { toast.error("Fyll i en titel för att hämta prisförslag."); return; }
-    setBusy("price");
+    if (!query) { toast.error("Fyll i en titel för att värdera."); return; }
+    setBusy("value");
     try {
-      const params = new URLSearchParams({ q: query });
-      const res = await fetch(`/api/tradera/price?${params.toString()}`, { cache: "no-store" });
+      const res = await fetch("/api/tradera/value", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          title: draft.title,
+          keywords: draft.keywords,
+          condition: draft.conditionNotes,
+          description: draft.description,
+          categoryId: traderaCategoryId ? Number(traderaCategoryId) : undefined,
+        }),
+      });
       const data = await res.json();
-      if (data.ok && data.suggested) {
+      if (data.ok) {
         setDraft((prev) => prev ? {
           ...prev,
-          price: String(data.median ?? data.suggested.low),
-          priceMeta: `Tradera-comps: ${data.suggested.low}–${data.suggested.high} kr (${data.count} st, utropspriser)`,
+          price: String(data.openingPriceSEK),
+          buyout: String(data.buyoutPriceSEK),
+          priceMeta: "",
         } : prev);
-        toast.success(`Prisförslag: ${data.suggested.low}–${data.suggested.high} kr`);
-      } else if (data.ok) {
-        toast.message("Inga jämförbara annonser hittades.");
+        setValuation({
+          confidence: data.confidence,
+          reasoning: data.reasoning,
+          basis: data.basis,
+          soldCount: data.sold?.count ?? 0,
+          activeCount: data.active?.count ?? 0,
+        });
+        toast.success("Värdering klar.");
       } else {
-        toast.error(data.error ?? "Prisförslaget misslyckades.");
+        toast.error(data.error ?? "Värderingen misslyckades.");
       }
     } catch {
-      toast.error("Nätverksfel vid prisförslag.");
+      toast.error("Nätverksfel vid värdering.");
     } finally {
       setBusy(null);
     }
@@ -333,6 +369,7 @@ export function LoppisApp() {
     if (!traderaCategoryId.trim()) { toast.error("Välj en Tradera-kategori."); return; }
     const priceDigits = draft.price.replace(/[^\d]/g, "");
     if (!priceDigits) { toast.error("Ange ett pris."); return; }
+    const buyoutDigits = (draft.buyout ?? "").replace(/[^\d]/g, "");
     setBusy("publish");
     try {
       const description = [draft.description, draft.conditionNotes ? `Skick: ${draft.conditionNotes}` : ""]
@@ -345,6 +382,7 @@ export function LoppisApp() {
           description,
           categoryId: Number(traderaCategoryId),
           startPrice: Number(priceDigits),
+          buyItNowPrice: buyoutDigits ? Number(buyoutDigits) : undefined,
           durationDays: 7,
         }),
       });
@@ -552,30 +590,58 @@ export function LoppisApp() {
           />
         </div>
 
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="price">Pris (kr)</Label>
-          <div className="flex gap-2">
-            <Input
-              id="price"
-              inputMode="numeric"
-              value={draft?.price ?? ""}
-              onChange={(e) => setField("price", e.target.value)}
-              className="flex-1"
-              placeholder="0"
-            />
+        {/* Valuation: opening price + buyout, with a researched suggestion */}
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <Label>Pris</Label>
             <Button
               type="button"
-              variant="outline"
-              size="icon"
-              onClick={getPrice}
+              variant="secondary"
+              size="sm"
+              onClick={valuate}
               disabled={busy !== null}
-              title="Hämta prisförslag från Tradera"
             >
-              <RefreshCw className={busy === "price" ? "animate-spin" : ""} />
+              <Sparkles className={busy === "value" ? "animate-pulse" : ""} />
+              {busy === "value" ? "Värderar…" : "Värdera"}
             </Button>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="flex flex-col gap-1">
+              <span className="text-muted-foreground text-xs">Utropspris (kr)</span>
+              <Input
+                inputMode="numeric"
+                value={draft?.price ?? ""}
+                onChange={(e) => setField("price", e.target.value)}
+                placeholder="0"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <span className="text-muted-foreground text-xs">Köp nu (kr)</span>
+              <Input
+                inputMode="numeric"
+                value={draft?.buyout ?? ""}
+                onChange={(e) => setField("buyout", e.target.value)}
+                placeholder="Valfritt"
+              />
+            </div>
           </div>
           {draft?.priceMeta && (
             <p className="text-muted-foreground text-xs">{draft.priceMeta}</p>
+          )}
+          {valuation && (
+            <div className="bg-muted/40 rounded-lg border p-3">
+              <p className="text-sm font-medium">
+                Värdering · {confidenceLabel(valuation.confidence)}
+              </p>
+              <p className="text-muted-foreground mt-1 text-xs">{valuation.reasoning}</p>
+              <p className="text-muted-foreground mt-1.5 text-xs">
+                Underlag:{" "}
+                {valuation.soldCount > 0 ? `${valuation.soldCount} sålda` : "inga sålda"}
+                {" · "}
+                {valuation.activeCount} aktiva
+                {valuation.basis === "ai-only" && " · AI-uppskattning"}
+              </p>
+            </div>
           )}
         </div>
 

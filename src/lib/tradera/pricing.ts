@@ -59,6 +59,30 @@ function toNumber(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+export interface PriceStats {
+  count: number;
+  median: number | null;
+  p25: number | null;
+  p75: number | null;
+  /** Up to 20 prices, ascending, for transparency and for the AI to reason over. */
+  sample: number[];
+}
+
+/** Percentile summary of a list of prices (drops non-positive / non-finite values). */
+export function priceStats(prices: number[]): PriceStats {
+  const sorted = prices.filter((n) => Number.isFinite(n) && n > 0).sort((a, b) => a - b);
+  if (sorted.length === 0) {
+    return { count: 0, median: null, p25: null, p75: null, sample: [] };
+  }
+  return {
+    count: sorted.length,
+    median: Math.round(percentile(sorted, 0.5)),
+    p25: Math.round(percentile(sorted, 0.25)),
+    p75: Math.round(percentile(sorted, 0.75)),
+    sample: sorted.slice(0, 20),
+  };
+}
+
 /** Linear-interpolated percentile of a pre-sorted ascending array. */
 function percentile(sorted: number[], p: number): number {
   if (sorted.length === 0) return 0;
