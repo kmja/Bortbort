@@ -61,6 +61,53 @@ async function fetchTraderaStatus(): Promise<TraderaStatus | null> {
   }
 }
 
+// ── Draft persistence ─────────────────────────────────────────────────────────
+// The Tradera connect flow navigates away to tradera.com and back, which remounts
+// the app and would otherwise drop the in-progress draft. We stash it in
+// sessionStorage before leaving and restore it on return.
+
+const DRAFT_STORAGE_KEY = "bortbort_draft_v1";
+
+interface PersistedSession {
+  draft: EditableDraft;
+  aiMeta: AiMeta | null;
+  traderaCategoryId: string;
+  categorySuggestion: string;
+  image: { dataUrl: string; name: string } | null;
+}
+
+function saveSession(s: PersistedSession) {
+  try {
+    sessionStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(s));
+  } catch {
+    // Quota exceeded (usually the photo). Keep the text draft; drop the image.
+    try {
+      sessionStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify({ ...s, image: null }));
+    } catch {
+      /* give up silently — the draft is a convenience, not critical state */
+    }
+  }
+}
+
+function loadSession(): PersistedSession | null {
+  try {
+    const raw = sessionStorage.getItem(DRAFT_STORAGE_KEY);
+    if (!raw) return null;
+    const s = JSON.parse(raw) as PersistedSession;
+    return s && s.draft ? s : null;
+  } catch {
+    return null;
+  }
+}
+
+function clearSession() {
+  try {
+    sessionStorage.removeItem(DRAFT_STORAGE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
 // ── Component ────────────────────────────────────────────────────────────────
 
 export function LoppisApp() {
@@ -72,8 +119,12 @@ export function LoppisApp() {
   const [draft, setDraft] = useState<EditableDraft | null>(null);
   const [aiMeta, setAiMeta] = useState<AiMeta | null>(null);
   const [traderaCategoryId, setTraderaCategoryId] = useState("");
+  const [categorySuggestion, setCategorySuggestion] = useState("");
   const [diag, setDiag] = useState<{ title: string; data: unknown } | null>(null);
   const [connectError, setConnectError] = useState<string | null>(null);
+  // Gates the camera until we've checked for a restorable draft, so returning
+  // from the connect flow doesn't briefly flash the viewfinder.
+  const [restoring, setRestoring] = useState(true);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -82,7 +133,7 @@ export function LoppisApp() {
 
   // Start / stop camera with appState
   useEffect(() => {
-    if (appState !== "camera" || noCam) return;
+    if (restoring || appState !== "camera" || noCam) return;
     let stream: MediaStream | null = null;
 
     navigator.mediaDevices
@@ -98,30 +149,44 @@ export function LoppisApp() {
       stream?.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
     };
-  }, [appState, noCam]);
+  }, [restoring, appState, noCam]);
 
-  // Status + token-login redirect result on mount
+  // Status + draft restore + token-login redirect result on mount
   useEffect(() => {
     let active = true;
     fetchTraderaStatus().then((s) => { if (active && s) setStatus(s); });
 
     const q = new URLSearchParams(window.location.search);
     const tradera = q.get("tradera");
-    if (tradera) {
-      // Strip the query params so a refresh doesn't re-surface the message.
-      window.history.replaceState({}, "", window.location.pathname);
+    // Strip the query params so a refresh doesn't re-surface the message.
+    if (tradera) window.history.replaceState({}, "", window.location.pathname);
+
+    // Deferred so we don't call setState synchronously in the effect body.
+    Promise.resolve().then(() => {
+      if (!active) return;
+
+      // Restore a draft stashed before the Tradera connect round-trip.
+      const saved = loadSession();
+      if (saved) {
+        setDraft(saved.draft);
+        setAiMeta(saved.aiMeta);
+        setTraderaCategoryId(saved.traderaCategoryId);
+        setCategorySuggestion(saved.categorySuggestion);
+        setImage(saved.image);
+        setAppState("draft");
+      }
+
       if (tradera === "connected") {
         toast.success("Tradera-kontot är anslutet.");
-      } else {
-        // Persist as an on-screen banner — a toast vanishes before it can be read on
-        // mobile. Deferred to a callback so we don't setState synchronously in the effect.
-        const reason =
-          tradera === "denied"
-            ? "Du nekade åtkomst i Tradera. Ingen anslutning gjordes."
-            : q.get("reason") ?? "Anslutningen till Tradera misslyckades.";
-        Promise.resolve().then(() => { if (active) setConnectError(reason); });
+      } else if (tradera === "denied") {
+        setConnectError("Du nekade åtkomst i Tradera. Ingen anslutning gjordes.");
+      } else if (tradera === "error") {
+        // A persistent banner — a toast vanishes before it can be read on mobile.
+        setConnectError(q.get("reason") ?? "Anslutningen till Tradera misslyckades.");
       }
-    }
+
+      setRestoring(false);
+    });
 
     return () => { active = false; };
   }, []);
@@ -151,6 +216,7 @@ export function LoppisApp() {
       const data = await res.json() as {
         ok: boolean;
         draft?: {
+          category?: string;
           title?: string;
           description?: string;
           conditionNotes?: string;
@@ -172,6 +238,7 @@ export function LoppisApp() {
           price: guess ? String(Math.round((guess.low + guess.high) / 2)) : "",
           priceMeta: guess ? `AI-förslag ${guess.low}–${guess.high} kr` : "",
         });
+        setCategorySuggestion(d.category ?? "");
         setAiMeta({
           identificationConfidence: d.identificationConfidence ?? "?",
           priceConfidence: d.priceConfidence ?? "?",
@@ -207,16 +274,26 @@ export function LoppisApp() {
   }
 
   function reset() {
+    clearSession();
     setDraft(null);
     setAiMeta(null);
     setImage(null);
     setTraderaCategoryId("");
+    setCategorySuggestion("");
     setDiag(null);
     setAppState("camera");
   }
 
   function setField(key: keyof EditableDraft, value: string) {
     setDraft((prev) => (prev ? { ...prev, [key]: value } : prev));
+  }
+
+  /** Stash the current draft, then leave for the Tradera token-login flow. */
+  function connectTradera() {
+    if (draft) {
+      saveSession({ draft, aiMeta, traderaCategoryId, categorySuggestion, image });
+    }
+    window.location.href = "/api/tradera/token/start";
   }
 
   // ── Price fetch ───────────────────────────────────────────────────────────
@@ -504,7 +581,11 @@ export function LoppisApp() {
 
         <div className="flex flex-col gap-1.5">
           <Label>Kategori (Tradera)</Label>
-          <CategoryPicker value={traderaCategoryId} onChange={setTraderaCategoryId} />
+          <CategoryPicker
+            value={traderaCategoryId}
+            onChange={setTraderaCategoryId}
+            suggestion={categorySuggestion}
+          />
         </div>
 
         <div className="flex flex-col gap-1.5">
@@ -550,8 +631,8 @@ export function LoppisApp() {
               <Button size="sm" variant="outline" onClick={testConnection} disabled={busy !== null}>
                 {busy === "ping" ? "Testar…" : "Testa anslutning"}
               </Button>
-              <Button asChild size="sm" variant="outline">
-                <a href="/api/tradera/token/start">Anslut Tradera-konto</a>
+              <Button size="sm" variant="outline" onClick={connectTradera}>
+                Anslut Tradera-konto
               </Button>
               <Button size="sm" onClick={postTestListing} disabled={busy !== null || !status?.userConnected}>
                 {busy === "listing" ? "Postar…" : "Lägg upp testannons"}
@@ -573,12 +654,13 @@ export function LoppisApp() {
       {/* Fixed publish bar */}
       <div className="fixed bottom-0 left-0 right-0 border-t bg-background/95 p-4 backdrop-blur">
         {!status?.userConnected && (
-          <a
-            href="/api/tradera/token/start"
-            className="text-muted-foreground mb-2 block text-center text-xs"
+          <button
+            type="button"
+            onClick={connectTradera}
+            className="text-muted-foreground mb-2 block w-full text-center text-xs underline"
           >
             Anslut Tradera-konto för att publicera →
-          </a>
+          </button>
         )}
         <Button
           onClick={publishToTradera}
