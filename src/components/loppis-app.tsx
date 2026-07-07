@@ -1,30 +1,22 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Camera, RefreshCw, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 
-import { HandoffPanel } from "@/components/handoff-panel";
 import { CategoryPicker } from "@/components/category-picker";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import type { ListingFields } from "@/lib/handoff";
 
-const SUPPORTED_IMAGE_TYPES = [
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-  "image/gif",
-];
+// ── Types ────────────────────────────────────────────────────────────────────
+
+const SUPPORTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+
+type AppState = "camera" | "analyzing" | "draft";
+type Busy = "price" | "ping" | "listing" | "publish" | null;
 
 interface TraderaStatus {
   appConfigured: boolean;
@@ -35,7 +27,6 @@ interface TraderaStatus {
 }
 
 interface EditableDraft {
-  category: string;
   title: string;
   description: string;
   conditionNotes: string;
@@ -49,18 +40,7 @@ interface AiMeta {
   priceConfidence: string;
 }
 
-interface IdentifyDraft {
-  category?: string;
-  title?: string;
-  description?: string;
-  conditionNotes?: string;
-  suggestedKeywords?: string[];
-  priceGuessSEK?: { low: number; high: number };
-  priceConfidence?: string;
-  identificationConfidence?: string;
-}
-
-type Busy = "identify" | "price" | "ping" | "listing" | "publish" | null;
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
 function readAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -80,142 +60,163 @@ async function fetchTraderaStatus(): Promise<TraderaStatus | null> {
   }
 }
 
-function toListingFields(d: EditableDraft): ListingFields {
-  const priceDigits = d.price.replace(/[^\d]/g, "");
-  return {
-    title: d.title,
-    description: d.description,
-    category: d.category,
-    condition: d.conditionNotes,
-    keywords: d.keywords
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean),
-    priceSEK: priceDigits ? Number(priceDigits) : null,
-  };
-}
+// ── Component ────────────────────────────────────────────────────────────────
 
 export function LoppisApp() {
+  const [appState, setAppState] = useState<AppState>("camera");
+  const [noCam, setNoCam] = useState(false);
   const [status, setStatus] = useState<TraderaStatus | null>(null);
   const [busy, setBusy] = useState<Busy>(null);
-  const [hint, setHint] = useState("");
-  const [image, setImage] = useState<{ dataUrl: string; name: string } | null>(
-    null,
-  );
+  const [image, setImage] = useState<{ dataUrl: string; name: string } | null>(null);
   const [draft, setDraft] = useState<EditableDraft | null>(null);
   const [aiMeta, setAiMeta] = useState<AiMeta | null>(null);
-  const [diag, setDiag] = useState<{ title: string; data: unknown } | null>(
-    null,
-  );
   const [traderaCategoryId, setTraderaCategoryId] = useState("");
+  const [diag, setDiag] = useState<{ title: string; data: unknown } | null>(null);
+
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
-  const refreshStatus = useCallback(async () => {
-    const data = await fetchTraderaStatus();
-    if (data) setStatus(data);
-  }, []);
-
+  // Start / stop camera with appState
   useEffect(() => {
-    let active = true;
-    fetchTraderaStatus().then((data) => {
-      if (active && data) setStatus(data);
-    });
-    if (
-      typeof window !== "undefined" &&
-      new URLSearchParams(window.location.search).get("tradera") === "connected"
-    ) {
+    if (appState !== "camera" || noCam) return;
+    let stream: MediaStream | null = null;
+
+    navigator.mediaDevices
+      ?.getUserMedia({ video: { facingMode: { ideal: "environment" } } })
+      .then((s) => {
+        stream = s;
+        streamRef.current = s;
+        if (videoRef.current) videoRef.current.srcObject = s;
+      })
+      .catch(() => setNoCam(true));
+
+    return () => {
+      stream?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    };
+  }, [appState, noCam]);
+
+  // Status + deep-link toast on mount
+  useEffect(() => {
+    fetchTraderaStatus().then((s) => { if (s) setStatus(s); });
+    if (new URLSearchParams(window.location.search).get("tradera") === "connected") {
       toast.success("Tradera-kontot är anslutet.");
     }
-    return () => {
-      active = false;
-    };
   }, []);
 
-  function setField(key: keyof EditableDraft, value: string) {
-    setDraft((prev) => (prev ? { ...prev, [key]: value } : prev));
+  // ── Camera capture ────────────────────────────────────────────────────────
+
+  function captureFrame(): string | null {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas || !video.videoWidth) return null;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext("2d")?.drawImage(video, 0, 0);
+    return canvas.toDataURL("image/jpeg", 0.85);
   }
 
-  async function onPickImage(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-    if (!SUPPORTED_IMAGE_TYPES.includes(file.type)) {
-      toast.error("Bildformatet stöds inte (JPEG, PNG, WebP eller GIF).");
-      return;
-    }
-
-    setBusy("identify");
+  async function analyzeImage(dataUrl: string, mediaType: string, name: string) {
+    setImage({ dataUrl, name });
+    setAppState("analyzing");
+    const imageBase64 = dataUrl.split(",")[1] ?? "";
     try {
-      const dataUrl = await readAsDataUrl(file);
-      setImage({ dataUrl, name: file.name });
-      const imageBase64 = dataUrl.split(",")[1] ?? "";
       const res = await fetch("/api/identify", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          imageBase64,
-          mediaType: file.type,
-          hint: hint.trim() || undefined,
-        }),
+        body: JSON.stringify({ imageBase64, mediaType }),
       });
-      const data = (await res.json()) as { ok: boolean; draft?: IdentifyDraft; error?: string };
+      const data = await res.json() as {
+        ok: boolean;
+        draft?: {
+          title?: string;
+          description?: string;
+          conditionNotes?: string;
+          suggestedKeywords?: string[];
+          priceGuessSEK?: { low: number; high: number };
+          priceConfidence?: string;
+          identificationConfidence?: string;
+        };
+        error?: string;
+      };
       if (data.ok && data.draft) {
         const d = data.draft;
         const guess = d.priceGuessSEK;
         setDraft({
-          category: d.category ?? "",
           title: d.title ?? "",
           description: d.description ?? "",
           conditionNotes: d.conditionNotes ?? "",
           keywords: (d.suggestedKeywords ?? []).join(", "),
           price: guess ? String(Math.round((guess.low + guess.high) / 2)) : "",
-          priceMeta: guess
-            ? `AI-gissning ${guess.low}–${guess.high} kr (konfidens: ${d.priceConfidence ?? "?"})`
-            : "",
+          priceMeta: guess ? `AI-förslag ${guess.low}–${guess.high} kr` : "",
         });
         setAiMeta({
           identificationConfidence: d.identificationConfidence ?? "?",
           priceConfidence: d.priceConfidence ?? "?",
         });
-        toast.success("Säljutkast skapat.");
+        setAppState("draft");
+        toast.success("Utkast klart!");
       } else {
-        toast.error(data.error ?? "Kunde inte skapa utkast.");
+        toast.error(data.error ?? "Kunde inte analysera bilden.");
+        setAppState("camera");
       }
     } catch {
-      toast.error("Något gick fel vid identifieringen.");
-    } finally {
-      setBusy(null);
+      toast.error("Nätverksfel vid analys.");
+      setAppState("camera");
     }
   }
+
+  async function onCaptureClick() {
+    const dataUrl = captureFrame();
+    if (!dataUrl) { toast.error("Kunde inte ta bild."); return; }
+    await analyzeImage(dataUrl, "image/jpeg", "foto.jpg");
+  }
+
+  async function onFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!SUPPORTED_IMAGE_TYPES.includes(file.type)) {
+      toast.error("Bildformatet stöds inte (JPEG, PNG, WebP eller GIF).");
+      return;
+    }
+    const dataUrl = await readAsDataUrl(file);
+    await analyzeImage(dataUrl, file.type, file.name);
+  }
+
+  function reset() {
+    setDraft(null);
+    setAiMeta(null);
+    setImage(null);
+    setTraderaCategoryId("");
+    setDiag(null);
+    setAppState("camera");
+  }
+
+  function setField(key: keyof EditableDraft, value: string) {
+    setDraft((prev) => (prev ? { ...prev, [key]: value } : prev));
+  }
+
+  // ── Price fetch ───────────────────────────────────────────────────────────
 
   async function getPrice() {
     if (!draft) return;
     const query = draft.title.trim() || draft.keywords.trim();
-    if (!query) {
-      toast.error("Fyll i en titel först så vi kan söka jämförbara annonser.");
-      return;
-    }
+    if (!query) { toast.error("Fyll i en titel för att hämta prisförslag."); return; }
     setBusy("price");
     try {
       const params = new URLSearchParams({ q: query });
-      const res = await fetch(`/api/tradera/price?${params.toString()}`, {
-        cache: "no-store",
-      });
+      const res = await fetch(`/api/tradera/price?${params.toString()}`, { cache: "no-store" });
       const data = await res.json();
-      setDiag({ title: `GET /api/tradera/price?${params.toString()}`, data });
       if (data.ok && data.suggested) {
-        setDraft((prev) =>
-          prev
-            ? {
-                ...prev,
-                price: String(data.median ?? data.suggested.low),
-                priceMeta: `Tradera-comps: ${data.suggested.low}–${data.suggested.high} kr (${data.count} annonser, ${data.confidence}, utropspriser)`,
-              }
-            : prev,
-        );
-        toast.success(
-          `Prisförslag: ${data.suggested.low}–${data.suggested.high} kr (${data.confidence}).`,
-        );
+        setDraft((prev) => prev ? {
+          ...prev,
+          price: String(data.median ?? data.suggested.low),
+          priceMeta: `Tradera-comps: ${data.suggested.low}–${data.suggested.high} kr (${data.count} st, utropspriser)`,
+        } : prev);
+        toast.success(`Prisförslag: ${data.suggested.low}–${data.suggested.high} kr`);
       } else if (data.ok) {
         toast.message("Inga jämförbara annonser hittades.");
       } else {
@@ -228,56 +229,17 @@ export function LoppisApp() {
     }
   }
 
-  async function testConnection() {
-    setBusy("ping");
-    try {
-      const res = await fetch("/api/tradera/ping", { cache: "no-store" });
-      const data = await res.json();
-      setDiag({ title: "GET /api/tradera/ping", data });
-      if (data.ok) toast.success(`Tradera svarade. Servertid: ${data.officialTime || "OK"}`);
-      else toast.error(data.error ?? "Anslutningen misslyckades.");
-    } catch {
-      toast.error("Nätverksfel vid anrop till Tradera.");
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function postTestListing() {
-    setBusy("listing");
-    try {
-      const res = await fetch("/api/tradera/test-listing", { method: "POST" });
-      const data = await res.json();
-      setDiag({ title: "POST /api/tradera/test-listing", data });
-      if (data.ok) toast.success("Testannons skickad till Tradera.");
-      else toast.error(data.error ?? "Kunde inte posta testannonsen.");
-    } catch {
-      toast.error("Nätverksfel vid posting av testannons.");
-    } finally {
-      setBusy(null);
-      void refreshStatus();
-    }
-  }
+  // ── Publish ───────────────────────────────────────────────────────────────
 
   async function publishToTradera() {
     if (!draft) return;
-    if (!traderaCategoryId.trim()) {
-      toast.error("Ange en Tradera kategori-id.");
-      return;
-    }
+    if (!traderaCategoryId.trim()) { toast.error("Välj en Tradera-kategori."); return; }
     const priceDigits = draft.price.replace(/[^\d]/g, "");
-    if (!priceDigits) {
-      toast.error("Ange ett pris innan du publicerar.");
-      return;
-    }
+    if (!priceDigits) { toast.error("Ange ett pris."); return; }
     setBusy("publish");
     try {
-      const description = [
-        draft.description,
-        draft.conditionNotes ? `Skick: ${draft.conditionNotes}` : "",
-      ]
-        .filter(Boolean)
-        .join("\n\n");
+      const description = [draft.description, draft.conditionNotes ? `Skick: ${draft.conditionNotes}` : ""]
+        .filter(Boolean).join("\n\n");
       const res = await fetch("/api/tradera/list", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -291,267 +253,295 @@ export function LoppisApp() {
       });
       const data = await res.json();
       setDiag({ title: "POST /api/tradera/list", data });
-      if (data.ok) toast.success("Annons skickad till Tradera.");
-      else toast.error(data.error ?? "Kunde inte publicera på Tradera.");
+      if (data.ok) {
+        toast.success("Annons publicerad på Tradera!");
+        reset();
+      } else {
+        toast.error(data.error ?? "Kunde inte publicera på Tradera.");
+      }
     } catch {
       toast.error("Nätverksfel vid Tradera-publicering.");
     } finally {
       setBusy(null);
-      void refreshStatus();
     }
   }
 
-  return (
-    <div className="flex flex-col gap-6">
-      <StatusBar status={status} />
+  // ── Diagnostics ───────────────────────────────────────────────────────────
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Steg 1 · Fota & identifiera</CardTitle>
-          <CardDescription>
-            Ladda upp ett foto. Vision-modellen föreslår kategori, titel,
-            beskrivning, skick och ett grovt pris – på svenska.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3">
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="hint">Ledtråd (valfritt)</Label>
-            <Textarea
-              id="hint"
-              placeholder="T.ex. 'IKEA Poäng-fåtölj, björk, lite slitage på dynan'"
-              value={hint}
-              onChange={(e) => setHint(e.target.value)}
-            />
-          </div>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept={SUPPORTED_IMAGE_TYPES.join(",")}
-            className="hidden"
-            onChange={onPickImage}
+  async function testConnection() {
+    setBusy("ping");
+    try {
+      const res = await fetch("/api/tradera/ping", { cache: "no-store" });
+      const data = await res.json();
+      setDiag({ title: "GET /api/tradera/ping", data });
+      if (data.ok) toast.success(`Tradera svarade: ${data.officialTime ?? "OK"}`);
+      else toast.error(data.error ?? "Anslutningen misslyckades.");
+    } catch {
+      toast.error("Nätverksfel.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function postTestListing() {
+    setBusy("listing");
+    try {
+      const res = await fetch("/api/tradera/test-listing", { method: "POST" });
+      const data = await res.json();
+      setDiag({ title: "POST /api/tradera/test-listing", data });
+      if (data.ok) toast.success("Testannons skickad.");
+      else toast.error(data.error ?? "Kunde inte posta testannonsen.");
+    } catch {
+      toast.error("Nätverksfel.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // ── Hidden shared file input ──────────────────────────────────────────────
+
+  const fileInput = (
+    <input
+      ref={fileInputRef}
+      type="file"
+      accept={SUPPORTED_IMAGE_TYPES.join(",")}
+      className="hidden"
+      onChange={onFileChange}
+    />
+  );
+
+  // ── Camera / Analyzing screen ─────────────────────────────────────────────
+
+  if (appState === "camera" || appState === "analyzing") {
+    return (
+      <div className="relative h-dvh w-full overflow-hidden bg-black">
+        {fileInput}
+        <canvas ref={canvasRef} className="hidden" />
+
+        {/* Live camera feed or fallback */}
+        {appState === "camera" && !noCam ? (
+          <video
+            ref={videoRef}
+            className="h-full w-full object-cover"
+            autoPlay
+            muted
+            playsInline
           />
-          <div className="flex items-center gap-3">
-            <Button
-              onClick={() => fileInputRef.current?.click()}
-              disabled={busy !== null}
-            >
-              {busy === "identify" ? "Analyserar bild…" : "Välj foto & skapa utkast"}
-            </Button>
-            {image && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={image.dataUrl}
-                alt="Uppladdat foto"
-                className="h-12 w-12 rounded-md object-cover"
-              />
-            )}
+        ) : appState === "analyzing" && image ? (
+          // Captured photo shown while analyzing
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={image.dataUrl} alt="" className="h-full w-full object-cover opacity-40" />
+        ) : null}
+
+        {/* Top status strip */}
+        <div className="absolute left-0 right-0 top-0 flex items-center gap-2 p-4 pt-safe-top">
+          <span className="rounded-full bg-black/50 px-2 py-0.5 text-xs font-medium text-white/80 backdrop-blur-sm">
+            Bortbort
+          </span>
+          {status && (
+            <span className={`rounded-full px-2 py-0.5 text-xs font-medium backdrop-blur-sm ${status.userConnected ? "bg-green-500/80 text-white" : "bg-black/50 text-white/60"}`}>
+              {status.userConnected ? `Tradera #${status.userId}` : "Inget konto"}
+            </span>
+          )}
+        </div>
+
+        {/* Analyzing overlay */}
+        {appState === "analyzing" && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-4">
+            <div className="h-12 w-12 animate-spin rounded-full border-4 border-white/30 border-t-white" />
+            <p className="text-lg font-medium text-white">Analyserar…</p>
           </div>
-        </CardContent>
-      </Card>
+        )}
 
-      {draft && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Steg 2 · Granska utkast</CardTitle>
-            <CardDescription className="flex flex-wrap items-center gap-2">
-              Justera fritt innan du delar.
-              {aiMeta && (
-                <>
-                  <Badge variant="outline">
-                    ID-säkerhet: {aiMeta.identificationConfidence}
-                  </Badge>
-                  <Badge variant="outline">
-                    Pris-säkerhet: {aiMeta.priceConfidence}
-                  </Badge>
-                </>
-              )}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-4">
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="title">Titel</Label>
-              <Input
-                id="title"
-                value={draft.title}
-                onChange={(e) => setField("title", e.target.value)}
-              />
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="price">Pris (SEK)</Label>
-              <div className="flex items-center gap-2">
-                <Input
-                  id="price"
-                  inputMode="numeric"
-                  value={draft.price}
-                  onChange={(e) => setField("price", e.target.value)}
-                  className="max-w-40"
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={getPrice}
-                  disabled={busy !== null}
-                >
-                  {busy === "price" ? "Hämtar…" : "Hämta prisförslag (Tradera)"}
+        {/* Bottom controls (camera state only) */}
+        {appState === "camera" && (
+          <div className="absolute bottom-0 left-0 right-0 flex flex-col items-center gap-4 pb-10 pb-safe-bottom">
+            {noCam ? (
+              <div className="flex flex-col items-center gap-3">
+                <Camera className="h-12 w-12 text-white/40" />
+                <p className="text-sm text-white/60">Kamera ej tillgänglig</p>
+                <Button onClick={() => fileInputRef.current?.click()} variant="secondary">
+                  Välj foto från galleri
                 </Button>
               </div>
-              {draft.priceMeta && (
-                <p className="text-muted-foreground text-xs">{draft.priceMeta}</p>
-              )}
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="category">Kategori</Label>
-              <Input
-                id="category"
-                value={draft.category}
-                onChange={(e) => setField("category", e.target.value)}
-              />
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="condition">Skick</Label>
-              <Input
-                id="condition"
-                value={draft.conditionNotes}
-                onChange={(e) => setField("conditionNotes", e.target.value)}
-              />
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="description">Beskrivning</Label>
-              <Textarea
-                id="description"
-                className="min-h-32"
-                value={draft.description}
-                onChange={(e) => setField("description", e.target.value)}
-              />
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="keywords">Sökord (kommaseparerade)</Label>
-              <Input
-                id="keywords"
-                value={draft.keywords}
-                onChange={(e) => setField("keywords", e.target.value)}
-              />
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {draft && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Steg 3 · Publicera på Tradera (API)</CardTitle>
-            <CardDescription>
-              Postar det aktuella utkastet via Traderas API (auto-publicering).
-              Kräver ett anslutet konto och en giltig Tradera kategori-id.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-3">
-            <div className="flex flex-col gap-2">
-              <Label>Tradera-kategori</Label>
-              <CategoryPicker
-                value={traderaCategoryId}
-                onChange={setTraderaCategoryId}
-              />
-            </div>
-            <Button
-              onClick={publishToTradera}
-              disabled={busy !== null || status?.userConnected === false}
-            >
-              {busy === "publish" ? "Publicerar…" : "Publicera på Tradera"}
-            </Button>
-            {status?.userConnected === false && (
-              <p className="text-muted-foreground text-xs">
-                Anslut ett Tradera-konto i Diagnostik först.
-              </p>
+            ) : (
+              <>
+                {/* Shutter button */}
+                <button
+                  onClick={onCaptureClick}
+                  className="flex h-20 w-20 items-center justify-center rounded-full border-4 border-white bg-white/10 transition-colors active:bg-white/30"
+                  aria-label="Ta foto"
+                >
+                  <div className="h-14 w-14 rounded-full bg-white" />
+                </button>
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="text-sm text-white/60 active:text-white"
+                >
+                  Välj från galleri
+                </button>
+              </>
             )}
-          </CardContent>
-        </Card>
-      )}
-
-      {draft && <HandoffPanel fields={toListingFields(draft)} image={image} />}
-
-      <Diagnostics
-        status={status}
-        busy={busy}
-        diag={diag}
-        onPing={testConnection}
-        onTestListing={postTestListing}
-      />
-    </div>
-  );
-}
-
-function StatusBar({ status }: { status: TraderaStatus | null }) {
-  if (!status) {
-    return <div className="text-muted-foreground text-sm">Hämtar status…</div>;
-  }
-  return (
-    <div className="flex flex-wrap items-center gap-2 text-sm">
-      <span className="text-muted-foreground">Tradera:</span>
-      <Badge variant={status.appConfigured ? "default" : "destructive"}>
-        App-nyckel {status.appConfigured ? "konfigurerad" : "saknas"}
-      </Badge>
-      {status.appConfigured && (status.appPoolSize ?? 0) > 1 && (
-        <Badge variant="secondary">{status.appPoolSize} nycklar (pool)</Badge>
-      )}
-      <Badge variant={status.sandbox ? "secondary" : "destructive"}>
-        {status.sandbox ? "Sandbox" : "PRODUKTION"}
-      </Badge>
-      <Badge variant={status.userConnected ? "default" : "outline"}>
-        {status.userConnected
-          ? `Konto #${status.userId}`
-          : "Inget konto anslutet"}
-      </Badge>
-    </div>
-  );
-}
-
-function Diagnostics({
-  status,
-  busy,
-  diag,
-  onPing,
-  onTestListing,
-}: {
-  status: TraderaStatus | null;
-  busy: Busy;
-  diag: { title: string; data: unknown } | null;
-  onPing: () => void;
-  onTestListing: () => void;
-}) {
-  return (
-    <details className="bg-card rounded-xl border">
-      <summary className="cursor-pointer px-6 py-4 text-sm font-medium">
-        Diagnostik & Tradera-spik
-      </summary>
-      <div className="flex flex-col gap-3 px-6 pb-6">
-        <div className="flex flex-wrap gap-2">
-          <Button size="sm" variant="outline" onClick={onPing} disabled={busy !== null}>
-            {busy === "ping" ? "Testar…" : "Testa anslutning"}
-          </Button>
-          <Button asChild size="sm" variant="outline">
-            <a href="/api/tradera/token/start">Anslut Tradera-konto</a>
-          </Button>
-          <Button
-            size="sm"
-            onClick={onTestListing}
-            disabled={busy !== null || status?.userConnected === false}
-          >
-            {busy === "listing" ? "Postar…" : "Lägg upp testannons (hårdkodad)"}
-          </Button>
-        </div>
-        {diag && (
-          <pre className="bg-muted max-h-80 overflow-auto rounded-md p-4 text-xs">
-            {`${diag.title}\n\n${JSON.stringify(diag.data, null, 2)}`}
-          </pre>
+          </div>
         )}
       </div>
-    </details>
+    );
+  }
+
+  // ── Draft screen ──────────────────────────────────────────────────────────
+
+  return (
+    <div className="min-h-dvh bg-background">
+      {fileInput}
+
+      {/* Photo header */}
+      <div className="sticky top-0 z-10 flex items-center gap-3 border-b bg-background/95 p-4 backdrop-blur">
+        {image && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={image.dataUrl}
+            alt="Taget foto"
+            className="h-12 w-12 shrink-0 rounded-lg object-cover"
+          />
+        )}
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold">Granska utkast</p>
+          {aiMeta && (
+            <p className="text-muted-foreground text-xs">
+              ID: {aiMeta.identificationConfidence} · Pris: {aiMeta.priceConfidence}
+            </p>
+          )}
+        </div>
+        <button
+          onClick={reset}
+          className="text-muted-foreground hover:text-foreground flex items-center gap-1 text-xs"
+          aria-label="Ta nytt foto"
+        >
+          <RotateCcw className="h-3.5 w-3.5" />
+          Nytt foto
+        </button>
+      </div>
+
+      {/* Form */}
+      <div className="flex flex-col gap-4 p-4 pb-36">
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="title">Titel</Label>
+          <Input
+            id="title"
+            value={draft?.title ?? ""}
+            onChange={(e) => setField("title", e.target.value)}
+          />
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="price">Pris (kr)</Label>
+          <div className="flex gap-2">
+            <Input
+              id="price"
+              inputMode="numeric"
+              value={draft?.price ?? ""}
+              onChange={(e) => setField("price", e.target.value)}
+              className="flex-1"
+              placeholder="0"
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              onClick={getPrice}
+              disabled={busy !== null}
+              title="Hämta prisförslag från Tradera"
+            >
+              <RefreshCw className={busy === "price" ? "animate-spin" : ""} />
+            </Button>
+          </div>
+          {draft?.priceMeta && (
+            <p className="text-muted-foreground text-xs">{draft.priceMeta}</p>
+          )}
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <Label>Kategori (Tradera)</Label>
+          <CategoryPicker value={traderaCategoryId} onChange={setTraderaCategoryId} />
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="condition">Skick</Label>
+          <Input
+            id="condition"
+            value={draft?.conditionNotes ?? ""}
+            onChange={(e) => setField("conditionNotes", e.target.value)}
+            placeholder="T.ex. Gott begagnat skick, inga defekter"
+          />
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="description">Beskrivning</Label>
+          <Textarea
+            id="description"
+            value={draft?.description ?? ""}
+            onChange={(e) => setField("description", e.target.value)}
+            rows={6}
+          />
+        </div>
+
+        {/* Diagnostics (collapsed) */}
+        <details className="bg-card mt-2 rounded-xl border">
+          <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
+            Diagnostik & Tradera-spik
+          </summary>
+          <div className="flex flex-col gap-3 px-4 pb-4">
+            {status && (
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                <Badge variant={status.appConfigured ? "default" : "destructive"}>
+                  {status.appConfigured ? `App OK (${status.appPoolSize ?? 1} nyckel${(status.appPoolSize ?? 1) > 1 ? "lar" : ""})` : "App-nyckel saknas"}
+                </Badge>
+                <Badge variant={status.sandbox ? "secondary" : "destructive"}>
+                  {status.sandbox ? "Sandbox" : "PRODUKTION"}
+                </Badge>
+                <Badge variant={status.userConnected ? "default" : "outline"}>
+                  {status.userConnected ? `Konto #${status.userId}` : "Inget konto"}
+                </Badge>
+              </div>
+            )}
+            <div className="flex flex-wrap gap-2 pt-1">
+              <Button size="sm" variant="outline" onClick={testConnection} disabled={busy !== null}>
+                {busy === "ping" ? "Testar…" : "Testa anslutning"}
+              </Button>
+              <Button asChild size="sm" variant="outline">
+                <a href="/api/tradera/token/start">Anslut Tradera-konto</a>
+              </Button>
+              <Button size="sm" onClick={postTestListing} disabled={busy !== null || !status?.userConnected}>
+                {busy === "listing" ? "Postar…" : "Lägg upp testannons"}
+              </Button>
+            </div>
+            {diag && (
+              <pre className="bg-muted max-h-60 overflow-auto rounded-md p-3 text-xs">
+                {`${diag.title}\n\n${JSON.stringify(diag.data, null, 2)}`}
+              </pre>
+            )}
+          </div>
+        </details>
+      </div>
+
+      {/* Fixed publish bar */}
+      <div className="fixed bottom-0 left-0 right-0 border-t bg-background/95 p-4 backdrop-blur">
+        {!status?.userConnected && (
+          <a
+            href="/api/tradera/token/start"
+            className="text-muted-foreground mb-2 block text-center text-xs"
+          >
+            Anslut Tradera-konto för att publicera →
+          </a>
+        )}
+        <Button
+          onClick={publishToTradera}
+          disabled={busy !== null || !status?.userConnected}
+          className="h-12 w-full text-base"
+        >
+          {busy === "publish" ? "Publicerar…" : "Publicera på Tradera"}
+        </Button>
+      </div>
+    </div>
   );
 }
