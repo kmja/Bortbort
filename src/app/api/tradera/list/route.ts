@@ -18,6 +18,7 @@ const BodySchema = z.object({
   startPrice: z.number().positive(),
   durationDays: z.number().int().positive().optional(),
   buyItNowPrice: z.number().nonnegative().optional(),
+  reservePrice: z.number().int().positive().optional(),
   /** Shipping cost in SEK for the default shipping option (0 = free/pickup). */
   shippingCost: z.number().nonnegative().optional(),
   /** Data-URL images (data:image/jpeg;base64,...). Attached via the staged flow. */
@@ -103,7 +104,7 @@ export async function POST(request: NextRequest) {
       durationDays: parsed.data.durationDays ?? 7,
       restarts: 0,
       startPrice: parsed.data.startPrice,
-      reservePrice: 0,
+      reservePrice: parsed.data.reservePrice ?? 0,
       buyItNowPrice: parsed.data.buyItNowPrice ?? 0,
       acceptedBidderId: 1, // Sweden
       shippingOptions,

@@ -22,7 +22,11 @@ export type SupportedImageType = (typeof SUPPORTED_IMAGE_TYPES)[number];
 export const ListingDraftSchema = z.object({
   category: z.string(),
   title: z.string(),
-  description: z.string(),
+  descriptions: z.object({
+    selling: z.string(),
+    factual: z.string(),
+    short: z.string(),
+  }),
   conditionNotes: z.string(),
   suggestedKeywords: z.array(z.string()),
   priceGuessSEK: z.object({ low: z.number(), high: z.number() }),
@@ -52,12 +56,19 @@ const SYSTEM_PROMPT = `Du är expert på att sälja begagnade prylar på svenska
 Givet ett foto av en pryl:
 1. Identifiera vad det är – kategori, och om möjligt märke och modell.
 2. Bedöm skicket utifrån synliga ledtrådar (slitage, skador, kompletthet).
-3. Skriv ett säljklart annonsutkast på naturlig, säljande men ärlig svenska.
+3. Skriv annonstext på naturlig svenska.
+
+PERSPEKTIV (viktigt): Skriv ALLTID som SÄLJAREN som säljer sin egen pryl – i första person. Skriv ALDRIG som en observatör som beskriver ett foto. Undvik fraser som "koppen verkar vara i gott skick", "på bilden syns", "det ser ut som". Skriv istället t.ex. "Säljer en fin kaffekopp i gott skick".
+
+Ge tre olika beskrivningar i "descriptions":
+- selling: säljande och personlig – lockar köpare, men ärlig.
+- factual: saklig och objektiv – bara fakta (märke, modell, mått, material, skick). Inga säljfraser.
+- short: kort och koncis, 1–2 meningar.
 
 Riktlinjer:
 - Var ärlig om osäkerhet. Hitta inte på märken, modeller eller skick du inte kan se.
 - Prisgissningen är en GROV uppskattning UTAN marknadsdata. Sätt priceConfidence till 'low' om du saknar säkra jämförelsepunkter – riktiga priser hämtas senare från sålda Tradera-annonser.
-- Allt säljartext-innehåll (titel, beskrivning, kategori, sökord) ska vara på svenska.`;
+- Allt innehåll (titel, beskrivningar, kategori, sökord) ska vara på svenska.`;
 
 const MULTI_SYSTEM_PROMPT = `${SYSTEM_PROMPT}
 

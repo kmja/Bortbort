@@ -108,7 +108,16 @@ export const LISTING_RESPONSE_SCHEMA = {
       description: "Marknadsplatskategori på svenska, t.ex. 'Hem & Hushåll > Möbler'.",
     },
     title: { type: "STRING", description: "Kort sökbar annonstitel på svenska (~50–60 tecken)." },
-    description: { type: "STRING", description: "Säljklar beskrivning på svenska." },
+    descriptions: {
+      type: "OBJECT",
+      description: "Tre beskrivningar i SÄLJARENS första person (inte som en observatör som beskriver ett foto).",
+      properties: {
+        selling: { type: "STRING", description: "Säljande och personlig, lockar köpare men ärlig." },
+        factual: { type: "STRING", description: "Saklig och objektiv – märke, modell, mått, skick. Inga säljfraser." },
+        short: { type: "STRING", description: "Kort och koncis, 1–2 meningar." },
+      },
+      required: ["selling", "factual", "short"],
+    },
     conditionNotes: { type: "STRING", description: "Kort skickbedömning utifrån fotot." },
     suggestedKeywords: { type: "ARRAY", items: { type: "STRING" } },
     priceGuessSEK: {
@@ -122,7 +131,7 @@ export const LISTING_RESPONSE_SCHEMA = {
   required: [
     "category",
     "title",
-    "description",
+    "descriptions",
     "conditionNotes",
     "suggestedKeywords",
     "priceGuessSEK",

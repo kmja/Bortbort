@@ -48,9 +48,20 @@ interface TraderaStatus {
   userId: number | null;
 }
 
+interface Descriptions {
+  selling: string;
+  factual: string;
+  short: string;
+}
+type DescriptionTone = keyof Descriptions;
+const EMPTY_DESCRIPTIONS: Descriptions = { selling: "", factual: "", short: "" };
+
 interface EditableDraft {
   title: string;
+  /** The active description text (edited freely). */
   description: string;
+  /** The three AI tone variants to switch between. */
+  descriptions: Descriptions;
   conditionNotes: string;
   keywords: string;
   /** Opening / start price. */
@@ -77,6 +88,7 @@ interface Valuation {
 interface BatchItem {
   title: string;
   description: string;
+  descriptions: Descriptions;
   conditionNotes: string;
   keywords: string;
   category: string;
@@ -88,7 +100,7 @@ interface BatchItem {
 interface AiItem {
   category?: string;
   title?: string;
-  description?: string;
+  descriptions?: Descriptions;
   conditionNotes?: string;
   suggestedKeywords?: string[];
   priceGuessSEK?: { low: number; high: number };
@@ -98,9 +110,11 @@ interface AiItem {
 
 function aiToBatchItem(d: AiItem): BatchItem {
   const guess = d.priceGuessSEK;
+  const descriptions = d.descriptions ?? EMPTY_DESCRIPTIONS;
   return {
     title: d.title ?? "",
-    description: d.description ?? "",
+    description: descriptions.selling,
+    descriptions,
     conditionNotes: d.conditionNotes ?? "",
     keywords: (d.suggestedKeywords ?? []).join(", "),
     category: d.category ?? "",
@@ -235,6 +249,9 @@ export function LoppisApp() {
   const [categoryAlternates, setCategoryAlternates] = useState<{ id: number; path: string }[]>([]);
   const [valuation, setValuation] = useState<Valuation | null>(null);
   const [shippingCost, setShippingCost] = useState("63");
+  const [durationDays, setDurationDays] = useState("7");
+  const [reserve, setReserve] = useState("");
+  const [descriptionTone, setDescriptionTone] = useState<DescriptionTone>("selling");
   const [batchItems, setBatchItems] = useState<BatchItem[]>([]);
   const [batchPhoto, setBatchPhoto] = useState<Photo | null>(null);
   const [batchOpenIndex, setBatchOpenIndex] = useState<number | null>(null);
@@ -371,18 +388,21 @@ export function LoppisApp() {
   /** Apply one AI item as the editable single-item draft. */
   function applyDraftItem(d: AiItem, photo: Photo) {
     const guess = d.priceGuessSEK;
+    const descriptions = d.descriptions ?? EMPTY_DESCRIPTIONS;
     setBatchPhoto(null);
     setBatchItems([]);
     setImages([photo]);
     setDraft({
       title: d.title ?? "",
-      description: d.description ?? "",
+      description: descriptions.selling,
+      descriptions,
       conditionNotes: d.conditionNotes ?? "",
       keywords: (d.suggestedKeywords ?? []).join(", "),
       price: guess ? String(Math.round((guess.low + guess.high) / 2)) : "",
       buyout: "",
       priceMeta: guess ? `AI-förslag ${guess.low}–${guess.high} kr` : "",
     });
+    setDescriptionTone("selling");
     setCategorySuggestion(d.category ?? "");
     setCategoryAlternates([]);
     setValuation(null);
@@ -393,11 +413,17 @@ export function LoppisApp() {
     setAppState("draft");
     suggestCategory({
       title: d.title ?? "",
-      description: d.description ?? "",
+      description: descriptions.selling,
       keywords: (d.suggestedKeywords ?? []).join(", "),
       condition: d.conditionNotes ?? "",
       aiCategory: d.category ?? "",
     });
+  }
+
+  /** Switch the description to one of the AI tone variants. */
+  function selectTone(tone: DescriptionTone) {
+    setDescriptionTone(tone);
+    setDraft((prev) => (prev ? { ...prev, description: prev.descriptions[tone] } : prev));
   }
 
   /**
@@ -461,12 +487,14 @@ export function LoppisApp() {
     setDraft({
       title: it.title,
       description: it.description,
+      descriptions: it.descriptions,
       conditionNotes: it.conditionNotes,
       keywords: it.keywords,
       price: it.price,
       buyout: it.buyout,
       priceMeta: "",
     });
+    setDescriptionTone("selling");
     setCategorySuggestion(it.category);
     setCategoryAlternates([]);
     setImages(batchPhoto ? [batchPhoto] : []);
@@ -491,7 +519,7 @@ export function LoppisApp() {
       setBatchItems((prev) =>
         prev.map((it, i) =>
           i === batchOpenIndex
-            ? { ...it, title: d.title, description: d.description, conditionNotes: d.conditionNotes, keywords: d.keywords, price: d.price, buyout: d.buyout }
+            ? { ...it, title: d.title, description: d.description, descriptions: d.descriptions, conditionNotes: d.conditionNotes, keywords: d.keywords, price: d.price, buyout: d.buyout }
             : it,
         ),
       );
@@ -574,6 +602,8 @@ export function LoppisApp() {
     setCategorySuggestion("");
     setCategoryAlternates([]);
     setValuation(null);
+    setReserve("");
+    setDescriptionTone("selling");
     setBatchItems([]);
     setBatchPhoto(null);
     setBatchOpenIndex(null);
@@ -708,8 +738,9 @@ export function LoppisApp() {
           categoryId: Number(traderaCategoryId),
           startPrice: Number(priceDigits),
           buyItNowPrice: buyoutDigits ? Number(buyoutDigits) : undefined,
+          reservePrice: Number(reserve.replace(/[^\d]/g, "")) || undefined,
           shippingCost: Number((shippingCost || "0").replace(/[^\d]/g, "")) || 0,
-          durationDays: 7,
+          durationDays: Number(durationDays) || 7,
           images: images.map((p) => p.dataUrl),
         }),
       });
@@ -1485,6 +1516,34 @@ export function LoppisApp() {
           </p>
         </div>
 
+        <div className="grid grid-cols-2 gap-2">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="duration">Auktionslängd</Label>
+            <select
+              id="duration"
+              value={durationDays}
+              onChange={(e) => setDurationDays(e.target.value)}
+              className="border-input bg-background h-9 rounded-md border px-3 text-sm"
+            >
+              <option value="3">3 dagar</option>
+              <option value="5">5 dagar</option>
+              <option value="7">7 dagar</option>
+              <option value="10">10 dagar</option>
+              <option value="14">14 dagar</option>
+            </select>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="reserve">Bevakningspris (kr)</Label>
+            <Input
+              id="reserve"
+              inputMode="numeric"
+              value={reserve}
+              onChange={(e) => setReserve(e.target.value)}
+              placeholder="Valfritt"
+            />
+          </div>
+        </div>
+
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="condition">Skick</Label>
           <Input
@@ -1496,7 +1555,29 @@ export function LoppisApp() {
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="description">Beskrivning</Label>
+          <div className="flex items-center justify-between gap-2">
+            <Label htmlFor="description">Beskrivning</Label>
+            {draft?.descriptions?.selling && (
+              <div className="flex rounded-full border p-0.5 text-xs">
+                {(
+                  [
+                    ["selling", "Säljande"],
+                    ["factual", "Saklig"],
+                    ["short", "Kort"],
+                  ] as [DescriptionTone, string][]
+                ).map(([tone, label]) => (
+                  <button
+                    key={tone}
+                    type="button"
+                    onClick={() => selectTone(tone)}
+                    className={`rounded-full px-2.5 py-0.5 font-medium ${descriptionTone === tone ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <Textarea
             id="description"
             value={draft?.description ?? ""}
