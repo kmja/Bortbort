@@ -33,6 +33,8 @@ export interface AddItemRequest {
   description: string;
   /** Tradera category id. Use PublicService.GetCategories to discover valid ids. */
   categoryId: number;
+  /** Item type id (PublicService.GetItemTypes). 1 = Auktion (auction). Required. */
+  itemType?: number;
   /** Auction length in days (Tradera supports a fixed set, e.g. 3/7/10/14). */
   durationDays: number;
   /** Number of automatic restarts if the item does not sell. */

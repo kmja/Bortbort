@@ -124,6 +124,7 @@ export async function addItem(
     xmlElement("Title", req.title) +
     xmlElement("Description", req.description) +
     xmlElement("CategoryId", req.categoryId) +
+    xmlElement("ItemType", req.itemType ?? 1) + // 1 = Auktion; 0 is invalid
     xmlElement("Duration", req.durationDays) +
     xmlElement("Restarts", req.restarts) +
     xmlElement("StartPrice", req.startPrice) +
