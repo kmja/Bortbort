@@ -157,6 +157,55 @@ export async function addItem(
   return { requestId, itemId, raw: res };
 }
 
+/** Tradera image formats accepted by AddItemImage. */
+export type TraderaImageFormat = "Jpeg" | "Gif" | "Png" | "Bmp";
+
+/**
+ * RestrictedService.AddItemImage — attaches one image to a staged item.
+ *
+ * Only valid when the item was created with AutoCommit=false. `imageData` is the
+ * base64 of the full image file (headers included). Keys off the AddItem
+ * `requestId`, not the itemId. Call once per image, then {@link commitItem}.
+ */
+export async function addItemImage(
+  requestId: string | number,
+  imageBase64: string,
+  imageFormat: TraderaImageFormat,
+  userAuth: TraderaUserAuth,
+  hasMega = false,
+  signal?: AbortSignal,
+): Promise<void> {
+  await callTradera({
+    service: "restricted",
+    operation: "AddItemImage",
+    bodyInnerXml:
+      xmlElement("requestId", requestId) +
+      xmlElement("imageData", imageBase64) +
+      xmlElement("imageFormat", imageFormat) +
+      xmlElement("hasMega", hasMega ? "true" : "false"),
+    userAuth,
+    signal,
+  });
+}
+
+/**
+ * RestrictedService.AddItemCommit — finalizes a staged (AutoCommit=false) item
+ * after its images have been uploaded, queuing it for creation.
+ */
+export async function commitItem(
+  requestId: string | number,
+  userAuth: TraderaUserAuth,
+  signal?: AbortSignal,
+): Promise<void> {
+  await callTradera({
+    service: "restricted",
+    operation: "AddItemCommit",
+    bodyInnerXml: xmlElement("requestId", requestId),
+    userAuth,
+    signal,
+  });
+}
+
 /**
  * A single, deliberately cheap, clearly-labelled test listing for the auth spike.
  * Keep it sandbox-only. Set TRADERA_TEST_CATEGORY_ID to a valid sandbox category id.

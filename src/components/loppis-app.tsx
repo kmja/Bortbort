@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Camera, RotateCcw, Sparkles } from "lucide-react";
+import { Camera, Plus, RotateCcw, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 
 import { CategoryPicker } from "@/components/category-picker";
@@ -54,12 +54,42 @@ interface Valuation {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+interface Photo {
+  dataUrl: string;
+  name: string;
+}
+
 function readAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result));
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * Re-encode an image to a capped-size JPEG. Keeps uploads under Vercel's ~4.5MB
+ * body limit, shrinks the AI request, and fits more photos in sessionStorage.
+ * Falls back to the original on any failure.
+ */
+function downscaleDataUrl(dataUrl: string, maxDim = 1600, quality = 0.82): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+      const w = Math.max(1, Math.round(img.width * scale));
+      const h = Math.max(1, Math.round(img.height * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return resolve(dataUrl);
+      ctx.drawImage(img, 0, 0, w, h);
+      resolve(canvas.toDataURL("image/jpeg", quality));
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
   });
 }
 
@@ -84,16 +114,16 @@ interface PersistedSession {
   aiMeta: AiMeta | null;
   traderaCategoryId: string;
   categorySuggestion: string;
-  image: { dataUrl: string; name: string } | null;
+  images: Photo[];
 }
 
 function saveSession(s: PersistedSession) {
   try {
     sessionStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(s));
   } catch {
-    // Quota exceeded (usually the photo). Keep the text draft; drop the image.
+    // Quota exceeded (usually the photos). Keep the text draft; drop the images.
     try {
-      sessionStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify({ ...s, image: null }));
+      sessionStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify({ ...s, images: [] }));
     } catch {
       /* give up silently — the draft is a convenience, not critical state */
     }
@@ -132,7 +162,7 @@ export function LoppisApp() {
   const [noCam, setNoCam] = useState(false);
   const [status, setStatus] = useState<TraderaStatus | null>(null);
   const [busy, setBusy] = useState<Busy>(null);
-  const [image, setImage] = useState<{ dataUrl: string; name: string } | null>(null);
+  const [images, setImages] = useState<Photo[]>([]);
   const [draft, setDraft] = useState<EditableDraft | null>(null);
   const [aiMeta, setAiMeta] = useState<AiMeta | null>(null);
   const [traderaCategoryId, setTraderaCategoryId] = useState("");
@@ -147,6 +177,7 @@ export function LoppisApp() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const addPhotoInputRef = useRef<HTMLInputElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
   // Start / stop camera with appState
@@ -190,7 +221,7 @@ export function LoppisApp() {
         setAiMeta(saved.aiMeta);
         setTraderaCategoryId(saved.traderaCategoryId);
         setCategorySuggestion(saved.categorySuggestion);
-        setImage(saved.image);
+        setImages(saved.images ?? []);
         setAppState("draft");
       }
 
@@ -215,21 +246,24 @@ export function LoppisApp() {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas || !video.videoWidth) return null;
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext("2d")?.drawImage(video, 0, 0);
-    return canvas.toDataURL("image/jpeg", 0.85);
+    const maxDim = 1600;
+    const scale = Math.min(1, maxDim / Math.max(video.videoWidth, video.videoHeight));
+    canvas.width = Math.round(video.videoWidth * scale);
+    canvas.height = Math.round(video.videoHeight * scale);
+    canvas.getContext("2d")?.drawImage(video, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/jpeg", 0.82);
   }
 
-  async function analyzeImage(dataUrl: string, mediaType: string, name: string) {
-    setImage({ dataUrl, name });
+  /** Analyze the primary photo and start a draft. `dataUrl` is a downscaled JPEG. */
+  async function analyzeImage(dataUrl: string, name: string) {
+    setImages([{ dataUrl, name }]);
     setAppState("analyzing");
     const imageBase64 = dataUrl.split(",")[1] ?? "";
     try {
       const res = await fetch("/api/identify", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ imageBase64, mediaType }),
+        body: JSON.stringify({ imageBase64, mediaType: "image/jpeg" }),
       });
       const data = await res.json() as {
         ok: boolean;
@@ -278,7 +312,7 @@ export function LoppisApp() {
   async function onCaptureClick() {
     const dataUrl = captureFrame();
     if (!dataUrl) { toast.error("Kunde inte ta bild."); return; }
-    await analyzeImage(dataUrl, "image/jpeg", "foto.jpg");
+    await analyzeImage(dataUrl, "foto.jpg");
   }
 
   async function onFileChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -289,15 +323,33 @@ export function LoppisApp() {
       toast.error("Bildformatet stöds inte (JPEG, PNG, WebP eller GIF).");
       return;
     }
-    const dataUrl = await readAsDataUrl(file);
-    await analyzeImage(dataUrl, file.type, file.name);
+    const dataUrl = await downscaleDataUrl(await readAsDataUrl(file));
+    await analyzeImage(dataUrl, file.name);
+  }
+
+  /** Append more photos to the current listing (no re-analysis). */
+  async function addPhotos(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []).filter((f) =>
+      SUPPORTED_IMAGE_TYPES.includes(f.type),
+    );
+    e.target.value = "";
+    if (files.length === 0) return;
+    const added: Photo[] = [];
+    for (const f of files) {
+      added.push({ dataUrl: await downscaleDataUrl(await readAsDataUrl(f)), name: f.name });
+    }
+    setImages((prev) => [...prev, ...added].slice(0, 12));
+  }
+
+  function removePhoto(idx: number) {
+    setImages((prev) => prev.filter((_, i) => i !== idx));
   }
 
   function reset() {
     clearSession();
     setDraft(null);
     setAiMeta(null);
-    setImage(null);
+    setImages([]);
     setTraderaCategoryId("");
     setCategorySuggestion("");
     setValuation(null);
@@ -312,7 +364,7 @@ export function LoppisApp() {
   /** Stash the current draft, then leave for the Tradera token-login flow. */
   function connectTradera() {
     if (draft) {
-      saveSession({ draft, aiMeta, traderaCategoryId, categorySuggestion, image });
+      saveSession({ draft, aiMeta, traderaCategoryId, categorySuggestion, images });
     }
     window.location.href = "/api/tradera/token/start";
   }
@@ -384,12 +436,18 @@ export function LoppisApp() {
           startPrice: Number(priceDigits),
           buyItNowPrice: buyoutDigits ? Number(buyoutDigits) : undefined,
           durationDays: 7,
+          images: images.map((p) => p.dataUrl),
         }),
       });
       const data = await res.json();
       setDiag({ title: "POST /api/tradera/list", data });
       if (data.ok) {
-        toast.success("Annons publicerad på Tradera!");
+        const attached = data.images?.attached;
+        toast.success(
+          typeof attached === "number"
+            ? `Annons publicerad på Tradera! (${attached} bild${attached === 1 ? "" : "er"})`
+            : "Annons publicerad på Tradera!",
+        );
         reset();
       } else {
         toast.error(data.error ?? "Kunde inte publicera på Tradera.");
@@ -462,10 +520,10 @@ export function LoppisApp() {
             muted
             playsInline
           />
-        ) : appState === "analyzing" && image ? (
+        ) : appState === "analyzing" && images[0] ? (
           // Captured photo shown while analyzing
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={image.dataUrl} alt="" className="h-full w-full object-cover opacity-40" />
+          <img src={images[0].dataUrl} alt="" className="h-full w-full object-cover opacity-40" />
         ) : null}
 
         {/* Top status strip */}
@@ -550,13 +608,21 @@ export function LoppisApp() {
   return (
     <div className="min-h-dvh bg-background">
       {fileInput}
+      <input
+        ref={addPhotoInputRef}
+        type="file"
+        accept={SUPPORTED_IMAGE_TYPES.join(",")}
+        multiple
+        className="hidden"
+        onChange={addPhotos}
+      />
 
       {/* Photo header */}
       <div className="sticky top-0 z-10 flex items-center gap-3 border-b bg-background/95 p-4 backdrop-blur">
-        {image && (
+        {images[0] && (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={image.dataUrl}
+            src={images[0].dataUrl}
             alt="Taget foto"
             className="h-12 w-12 shrink-0 rounded-lg object-cover"
           />
@@ -581,6 +647,46 @@ export function LoppisApp() {
 
       {/* Form */}
       <div className="flex flex-col gap-4 p-4 pb-36">
+        {/* Photos: primary is the analyzed one; add more to show off the item */}
+        <div className="flex flex-col gap-1.5">
+          <Label>Foton ({images.length})</Label>
+          <div className="flex flex-wrap gap-2">
+            {images.map((p, i) => (
+              <div key={`${p.name}-${i}`} className="relative">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={p.dataUrl}
+                  alt={`Foto ${i + 1}`}
+                  className="h-20 w-20 rounded-lg border object-cover"
+                />
+                {i === 0 && (
+                  <span className="bg-background/90 absolute left-1 top-1 rounded px-1 text-[10px] font-medium">
+                    Huvudbild
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => removePhoto(i)}
+                  aria-label="Ta bort foto"
+                  className="bg-background/90 absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full border text-xs leading-none"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+            {images.length < 12 && (
+              <button
+                type="button"
+                onClick={() => addPhotoInputRef.current?.click()}
+                className="text-muted-foreground hover:bg-muted flex h-20 w-20 flex-col items-center justify-center gap-1 rounded-lg border border-dashed text-xs"
+              >
+                <Plus className="h-5 w-5" />
+                Lägg till
+              </button>
+            )}
+          </div>
+        </div>
+
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="title">Titel</Label>
           <Input
