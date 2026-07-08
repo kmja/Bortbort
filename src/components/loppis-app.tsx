@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Camera, Plus, RotateCcw, Sparkles } from "lucide-react";
+import { Camera, ChevronLeft, ExternalLink, Plus, RefreshCw, RotateCcw, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 
 import { CategoryPicker } from "@/components/category-picker";
@@ -16,8 +16,18 @@ import { APP_COMMIT, VERSION_LABEL } from "@/lib/version";
 
 const SUPPORTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 
-type AppState = "camera" | "analyzing" | "draft" | "batch";
+type AppState = "camera" | "analyzing" | "draft" | "batch" | "listings";
 type Busy = "value" | "ping" | "listing" | "publish" | null;
+
+interface SellerItem {
+  id: number;
+  title?: string;
+  price?: number;
+  endDate?: string;
+  bids?: number;
+  thumbnail?: string;
+  url: string;
+}
 
 interface TraderaStatus {
   appConfigured: boolean;
@@ -190,6 +200,13 @@ function confidenceLabel(c: string): string {
   return "låg säkerhet";
 }
 
+/** Format a Tradera end-date to a short Swedish date, tolerating odd input. */
+function formatListingDate(s?: string): string {
+  if (!s) return "";
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? s : d.toLocaleDateString("sv-SE");
+}
+
 // ── Component ────────────────────────────────────────────────────────────────
 
 export function LoppisApp() {
@@ -211,6 +228,9 @@ export function LoppisApp() {
   const [batchOpenIndex, setBatchOpenIndex] = useState<number | null>(null);
   const [diag, setDiag] = useState<{ title: string; data: unknown } | null>(null);
   const [connectError, setConnectError] = useState<string | null>(null);
+  const [listings, setListings] = useState<{ active: SellerItem[]; ended: SellerItem[] } | null>(null);
+  const [listingsBusy, setListingsBusy] = useState(false);
+  const [listingsError, setListingsError] = useState<string | null>(null);
   // Gates the camera until we've checked for a restorable draft, so returning
   // from the connect flow doesn't briefly flash the viewfinder.
   const [restoring, setRestoring] = useState(true);
@@ -780,6 +800,26 @@ export function LoppisApp() {
     }
   }
 
+  async function fetchListings() {
+    setListingsBusy(true);
+    setListingsError(null);
+    try {
+      const res = await fetch("/api/tradera/listings", { cache: "no-store" });
+      const data = await res.json();
+      if (data.ok) setListings({ active: data.active ?? [], ended: data.ended ?? [] });
+      else setListingsError(data.error ?? "Kunde inte hämta annonser.");
+    } catch {
+      setListingsError("Nätverksfel.");
+    } finally {
+      setListingsBusy(false);
+    }
+  }
+
+  function openListings() {
+    setAppState("listings");
+    fetchListings();
+  }
+
   // ── Hidden shared file input ──────────────────────────────────────────────
 
   const fileInput = (
@@ -862,6 +902,14 @@ export function LoppisApp() {
         {/* Bottom controls (camera state only) */}
         {appState === "camera" && (
           <div className="absolute bottom-0 left-0 right-0 flex flex-col items-center gap-4 pb-10 pb-safe-bottom">
+            {status?.userConnected && (
+              <button
+                onClick={openListings}
+                className="rounded-full bg-black/50 px-3 py-1.5 text-sm font-medium text-white/80 backdrop-blur-sm active:text-white"
+              >
+                Mina annonser
+              </button>
+            )}
             {/* Mode toggle: one item vs a whole pile */}
             <div className="flex rounded-full bg-black/50 p-1 text-xs backdrop-blur-sm">
               <button
@@ -905,6 +953,94 @@ export function LoppisApp() {
             )}
           </div>
         )}
+      </div>
+    );
+  }
+
+  // ── Listings screen (my active + past Tradera items) ──────────────────────
+
+  if (appState === "listings") {
+    const renderItems = (items: SellerItem[]) =>
+      items.map((it) => (
+        <a
+          key={it.id}
+          href={it.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="hover:bg-muted flex items-center gap-3 rounded-lg border p-3"
+        >
+          {it.thumbnail ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={it.thumbnail} alt="" className="h-12 w-12 shrink-0 rounded object-cover" />
+          ) : (
+            <div className="bg-muted h-12 w-12 shrink-0 rounded" />
+          )}
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium">{it.title ?? `Annons #${it.id}`}</p>
+            <p className="text-muted-foreground text-xs">
+              {[
+                it.price != null ? `${it.price} kr` : null,
+                it.bids != null ? `${it.bids} bud` : null,
+                it.endDate ? formatListingDate(it.endDate) : null,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </p>
+          </div>
+          <ExternalLink className="text-muted-foreground h-4 w-4 shrink-0" />
+        </a>
+      ));
+
+    const isEmpty =
+      listings && listings.active.length === 0 && listings.ended.length === 0;
+
+    return (
+      <div className="min-h-dvh bg-background">
+        <div className="sticky top-0 z-10 flex items-center gap-3 border-b bg-background/95 p-4 backdrop-blur">
+          <button
+            onClick={() => setAppState("camera")}
+            className="text-muted-foreground hover:text-foreground flex items-center gap-1 text-sm"
+          >
+            <ChevronLeft className="h-4 w-4" />
+            Tillbaka
+          </button>
+          <p className="flex-1 text-sm font-semibold">Mina annonser</p>
+          <button
+            onClick={fetchListings}
+            disabled={listingsBusy}
+            aria-label="Uppdatera"
+            className="text-muted-foreground hover:text-foreground"
+          >
+            <RefreshCw className={`h-4 w-4 ${listingsBusy ? "animate-spin" : ""}`} />
+          </button>
+        </div>
+
+        <div className="flex flex-col gap-6 p-4">
+          {listingsBusy && !listings && (
+            <p className="text-muted-foreground text-center text-sm">Hämtar annonser…</p>
+          )}
+          {listingsError && (
+            <p className="text-center text-sm text-red-600">{listingsError}</p>
+          )}
+          {isEmpty && (
+            <p className="text-muted-foreground text-center text-sm">
+              Inga annonser hittades ännu.
+            </p>
+          )}
+          {listings && listings.active.length > 0 && (
+            <div className="flex flex-col gap-2">
+              <p className="text-sm font-semibold">Aktiva ({listings.active.length})</p>
+              {renderItems(listings.active)}
+            </div>
+          )}
+          {listings && listings.ended.length > 0 && (
+            <div className="flex flex-col gap-2">
+              <p className="text-sm font-semibold">Avslutade ({listings.ended.length})</p>
+              {renderItems(listings.ended)}
+            </div>
+          )}
+          <p className="text-muted-foreground text-center font-mono text-[10px]">{VERSION_LABEL}</p>
+        </div>
       </div>
     );
   }
