@@ -202,6 +202,7 @@ export function LoppisApp() {
   const [aiMeta, setAiMeta] = useState<AiMeta | null>(null);
   const [traderaCategoryId, setTraderaCategoryId] = useState("");
   const [categorySuggestion, setCategorySuggestion] = useState("");
+  const [categoryAlternates, setCategoryAlternates] = useState<{ id: number; path: string }[]>([]);
   const [valuation, setValuation] = useState<Valuation | null>(null);
   const [shippingCost, setShippingCost] = useState("63");
   const [captureMode, setCaptureMode] = useState<"single" | "multi">("single");
@@ -364,6 +365,7 @@ export function LoppisApp() {
           priceMeta: guess ? `AI-förslag ${guess.low}–${guess.high} kr` : "",
         });
         setCategorySuggestion(d.category ?? "");
+        setCategoryAlternates([]);
         setValuation(null);
         setAiMeta({
           identificationConfidence: d.identificationConfidence ?? "?",
@@ -371,6 +373,13 @@ export function LoppisApp() {
         });
         setAppState("draft");
         toast.success("Utkast klart!");
+        suggestCategory({
+          title: d.title ?? "",
+          description: d.description ?? "",
+          keywords: (d.suggestedKeywords ?? []).join(", "),
+          condition: d.conditionNotes ?? "",
+          aiCategory: d.category ?? "",
+        });
       } else {
         toast.error(data.error ?? "Kunde inte analysera bilden.");
         setAppState("camera");
@@ -444,12 +453,20 @@ export function LoppisApp() {
       priceMeta: "",
     });
     setCategorySuggestion(it.category);
+    setCategoryAlternates([]);
     setImages(batchPhoto ? [batchPhoto] : []);
     setValuation(null);
     setAiMeta(null);
     setTraderaCategoryId("");
     setBatchOpenIndex(i);
     setAppState("draft");
+    suggestCategory({
+      title: it.title,
+      description: it.description,
+      keywords: it.keywords,
+      condition: it.conditionNotes,
+      aiCategory: it.category,
+    });
   }
 
   /** Return from an opened batch item to the list, saving edits back into it. */
@@ -471,6 +488,7 @@ export function LoppisApp() {
     setAiMeta(null);
     setTraderaCategoryId("");
     setCategorySuggestion("");
+    setCategoryAlternates([]);
     setAppState("batch");
   }
 
@@ -539,6 +557,7 @@ export function LoppisApp() {
     setImages([]);
     setTraderaCategoryId("");
     setCategorySuggestion("");
+    setCategoryAlternates([]);
     setValuation(null);
     setBatchItems([]);
     setBatchPhoto(null);
@@ -562,6 +581,7 @@ export function LoppisApp() {
     setImages([]);
     setTraderaCategoryId("");
     setCategorySuggestion("");
+    setCategoryAlternates([]);
     setValuation(null);
     if (remaining.length > 0) {
       setAppState("batch");
@@ -573,6 +593,30 @@ export function LoppisApp() {
 
   function setField(key: keyof EditableDraft, value: string) {
     setDraft((prev) => (prev ? { ...prev, [key]: value } : prev));
+  }
+
+  /** Smart category: retrieve real candidates + let Gemini pick. Fire-and-forget. */
+  async function suggestCategory(fields: {
+    title: string;
+    description: string;
+    keywords: string;
+    condition: string;
+    aiCategory: string;
+  }) {
+    try {
+      const res = await fetch("/api/tradera/suggest-category", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(fields),
+      });
+      const data = await res.json();
+      if (data.ok && data.primaryId) {
+        setTraderaCategoryId(String(data.primaryId));
+        setCategoryAlternates(Array.isArray(data.alternates) ? data.alternates : []);
+      }
+    } catch {
+      /* keep the client-side breadcrumb fallback */
+    }
   }
 
   /** Stash the current draft, then leave for the Tradera token-login flow. */
@@ -1082,6 +1126,7 @@ export function LoppisApp() {
             value={traderaCategoryId}
             onChange={setTraderaCategoryId}
             suggestion={categorySuggestion}
+            alternates={categoryAlternates}
           />
         </div>
 

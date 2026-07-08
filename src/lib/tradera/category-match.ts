@@ -44,17 +44,25 @@ export function retrieveCandidates(
   query: string,
   limit: number,
 ): CategoryNode[] {
-  const qtok = new Set(tokenize(query));
-  if (qtok.size === 0) return [];
+  const qtok = [...new Set(tokenize(query))];
+  if (qtok.length === 0) return [];
   const scored: Array<{ c: CategoryNode; score: number }> = [];
   for (const c of cats) {
     if (!c.leaf) continue;
-    const nameToks = new Set(normalizeCat(c.name).split(" ").filter(Boolean));
+    const nameToks = normalizeCat(c.name).split(" ").filter(Boolean);
     const pathToks = new Set(normalizeCat(c.path).split(" ").filter(Boolean));
     let score = 0;
     for (const t of qtok) {
-      if (nameToks.has(t)) score += 3;
-      else if (pathToks.has(t)) score += 1;
+      if (nameToks.includes(t)) {
+        score += 3;
+      } else if (
+        // Swedish compounds: "glasögonbågar" should still hit "glasögon".
+        nameToks.some((nt) => nt.length >= 4 && (t.includes(nt) || nt.includes(t)))
+      ) {
+        score += 2;
+      } else if (pathToks.has(t)) {
+        score += 1;
+      }
     }
     if (score > 0) scored.push({ c, score });
   }

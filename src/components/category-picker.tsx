@@ -17,9 +17,11 @@ interface CategoryPickerProps {
   onChange: (id: string) => void;
   /** AI category breadcrumb (e.g. "Hem & Hushåll > Möbler") to auto-select on load. */
   suggestion?: string;
+  /** Server-reranked alternative categories (preferred over the local fuzzy pills). */
+  alternates?: { id: number; path: string }[];
 }
 
-export function CategoryPicker({ value, onChange, suggestion }: CategoryPickerProps) {
+export function CategoryPicker({ value, onChange, suggestion, alternates }: CategoryPickerProps) {
   const [categories, setCategories] = useState<Category[] | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [query, setQuery] = useState("");
@@ -103,7 +105,9 @@ export function CategoryPicker({ value, onChange, suggestion }: CategoryPickerPr
 
   // ── Collapsed state: selected category + alternative suggestion pills ───────
   if (selected && !editing) {
-    const alts = suggestions.filter((c) => c.id !== selected.id).slice(0, 4);
+    const source: { id: number; path: string }[] =
+      alternates && alternates.length > 0 ? alternates : suggestions;
+    const alts = source.filter((c) => c.id !== selected.id).slice(0, 4);
     return (
       <div className="flex flex-col gap-2">
         <div className="flex items-center gap-2 rounded-md border p-2">
