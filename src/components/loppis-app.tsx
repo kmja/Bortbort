@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Camera, ExternalLink, Menu, Plus, RefreshCw, RotateCcw, Sparkles } from "lucide-react";
+import { Camera, ChevronLeft, ChevronRight, ExternalLink, Menu, Plus, RefreshCw, RotateCcw, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 
 import { CategoryPicker } from "@/components/category-picker";
@@ -26,6 +26,17 @@ interface SellerItem {
   endDate?: string;
   bids?: number;
   thumbnail?: string;
+  url: string;
+}
+
+interface ItemDetails {
+  id: number;
+  title?: string;
+  description?: string;
+  images: string[];
+  price?: number;
+  bids?: number;
+  endDate?: string;
   url: string;
 }
 
@@ -234,6 +245,9 @@ export function LoppisApp() {
   const [listingsError, setListingsError] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [profileAlias, setProfileAlias] = useState<string | null>(null);
+  const [selectedItem, setSelectedItem] = useState<SellerItem | null>(null);
+  const [itemDetail, setItemDetail] = useState<ItemDetails | null>(null);
+  const [itemDetailBusy, setItemDetailBusy] = useState(false);
   // Gates the camera until we've checked for a restorable draft, so returning
   // from the connect flow doesn't briefly flash the viewfinder.
   const [restoring, setRestoring] = useState(true);
@@ -804,18 +818,33 @@ export function LoppisApp() {
 
   function openSidebar() {
     setSidebarOpen(true);
+    setSelectedItem(null);
     fetchProfile();
     fetchListings();
   }
 
+  async function openItem(it: SellerItem) {
+    setSelectedItem(it);
+    setItemDetail(null);
+    setItemDetailBusy(true);
+    try {
+      const res = await fetch(`/api/tradera/item?id=${it.id}`, { cache: "no-store" });
+      const data = await res.json();
+      if (data.ok) setItemDetail(data as ItemDetails);
+    } catch {
+      /* fall back to the summary we already have */
+    } finally {
+      setItemDetailBusy(false);
+    }
+  }
+
   const renderListingItems = (items: SellerItem[]) =>
     items.map((it) => (
-      <a
+      <button
         key={it.id}
-        href={it.url}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="hover:bg-muted flex items-center gap-3 rounded-lg border p-2.5"
+        type="button"
+        onClick={() => openItem(it)}
+        className="hover:bg-muted flex w-full items-center gap-3 rounded-lg border p-2.5 text-left"
       >
         {it.thumbnail ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -835,11 +864,17 @@ export function LoppisApp() {
               .join(" · ")}
           </p>
         </div>
-        <ExternalLink className="text-muted-foreground h-4 w-4 shrink-0" />
-      </a>
+        <ChevronRight className="text-muted-foreground h-4 w-4 shrink-0" />
+      </button>
     ));
 
   // ── Sidebar (profile + my listings) ───────────────────────────────────────
+
+  const detailImages = itemDetail?.images?.length
+    ? itemDetail.images
+    : selectedItem?.thumbnail
+      ? [selectedItem.thumbnail]
+      : [];
 
   const sidebar = (
     <div className={`fixed inset-0 z-50 ${sidebarOpen ? "" : "pointer-events-none"}`}>
@@ -850,6 +885,63 @@ export function LoppisApp() {
       <aside
         className={`bg-background absolute left-0 top-0 flex h-full w-[86%] max-w-sm flex-col shadow-xl transition-transform ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}
       >
+        {selectedItem ? (
+          /* ── Item detail ── */
+          <div className="flex h-full flex-col">
+            <div className="flex items-center gap-2 border-b p-4 pt-safe-top">
+              <button
+                onClick={() => setSelectedItem(null)}
+                className="text-muted-foreground hover:text-foreground flex items-center gap-1 text-sm"
+              >
+                <ChevronLeft className="h-4 w-4" />
+                Tillbaka
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto p-4">
+              {detailImages.length > 0 && (
+                <div className="mb-3 flex gap-2 overflow-x-auto">
+                  {detailImages.map((src, i) => (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img key={i} src={src} alt="" className="h-44 rounded-lg object-cover" />
+                  ))}
+                </div>
+              )}
+              <h2 className="text-base font-semibold">
+                {itemDetail?.title ?? selectedItem.title ?? `Annons #${selectedItem.id}`}
+              </h2>
+              <p className="text-muted-foreground mt-1 text-sm">
+                {[
+                  (itemDetail?.price ?? selectedItem.price) != null
+                    ? `${itemDetail?.price ?? selectedItem.price} kr`
+                    : null,
+                  (itemDetail?.bids ?? selectedItem.bids) != null
+                    ? `${itemDetail?.bids ?? selectedItem.bids} bud`
+                    : null,
+                  itemDetail?.endDate ?? selectedItem.endDate
+                    ? formatListingDate(itemDetail?.endDate ?? selectedItem.endDate)
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </p>
+              {itemDetailBusy && (
+                <p className="text-muted-foreground mt-3 text-sm">Hämtar detaljer…</p>
+              )}
+              {itemDetail?.description && (
+                <p className="mt-3 text-sm whitespace-pre-wrap">{itemDetail.description}</p>
+              )}
+              <a
+                href={itemDetail?.url ?? selectedItem.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-primary mt-4 inline-flex items-center gap-1 text-sm underline"
+              >
+                <ExternalLink className="h-4 w-4" /> Öppna på Tradera
+              </a>
+            </div>
+          </div>
+        ) : (
+          <>
         {/* Profile */}
         <div className="border-b p-4 pt-safe-top">
           {status?.userConnected ? (
@@ -926,6 +1018,8 @@ export function LoppisApp() {
             <p className="text-muted-foreground text-sm">Inga annonser hittades ännu.</p>
           )}
         </div>
+          </>
+        )}
       </aside>
     </div>
   );
