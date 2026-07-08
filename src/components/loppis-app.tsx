@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Camera, ChevronLeft, ExternalLink, Plus, RefreshCw, RotateCcw, Sparkles } from "lucide-react";
+import { Camera, ExternalLink, Menu, Plus, RefreshCw, RotateCcw, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 
 import { CategoryPicker } from "@/components/category-picker";
@@ -16,7 +16,7 @@ import { APP_COMMIT, VERSION_LABEL } from "@/lib/version";
 
 const SUPPORTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 
-type AppState = "camera" | "analyzing" | "draft" | "batch" | "listings";
+type AppState = "camera" | "analyzing" | "draft" | "batch";
 type Busy = "value" | "ping" | "listing" | "publish" | null;
 
 interface SellerItem {
@@ -81,6 +81,8 @@ interface AiItem {
   conditionNotes?: string;
   suggestedKeywords?: string[];
   priceGuessSEK?: { low: number; high: number };
+  priceConfidence?: string;
+  identificationConfidence?: string;
 }
 
 function aiToBatchItem(d: AiItem): BatchItem {
@@ -222,7 +224,6 @@ export function LoppisApp() {
   const [categoryAlternates, setCategoryAlternates] = useState<{ id: number; path: string }[]>([]);
   const [valuation, setValuation] = useState<Valuation | null>(null);
   const [shippingCost, setShippingCost] = useState("63");
-  const [captureMode, setCaptureMode] = useState<"single" | "multi">("single");
   const [batchItems, setBatchItems] = useState<BatchItem[]>([]);
   const [batchPhoto, setBatchPhoto] = useState<Photo | null>(null);
   const [batchOpenIndex, setBatchOpenIndex] = useState<number | null>(null);
@@ -231,6 +232,8 @@ export function LoppisApp() {
   const [listings, setListings] = useState<{ active: SellerItem[]; ended: SellerItem[] } | null>(null);
   const [listingsBusy, setListingsBusy] = useState(false);
   const [listingsError, setListingsError] = useState<string | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [profileAlias, setProfileAlias] = useState<string | null>(null);
   // Gates the camera until we've checked for a restorable draft, so returning
   // from the connect flow doesn't briefly flash the viewfinder.
   const [restoring, setRestoring] = useState(true);
@@ -347,73 +350,46 @@ export function LoppisApp() {
     return canvas.toDataURL("image/jpeg", 0.82);
   }
 
-  /** Analyze the primary photo and start a draft. `dataUrl` is a downscaled JPEG. */
-  async function analyzeImage(dataUrl: string, name: string) {
-    setImages([{ dataUrl, name }]);
-    setAppState("analyzing");
-    const imageBase64 = dataUrl.split(",")[1] ?? "";
-    try {
-      const res = await fetch("/api/identify", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ imageBase64, mediaType: "image/jpeg" }),
-      });
-      const data = await res.json() as {
-        ok: boolean;
-        draft?: {
-          category?: string;
-          title?: string;
-          description?: string;
-          conditionNotes?: string;
-          suggestedKeywords?: string[];
-          priceGuessSEK?: { low: number; high: number };
-          priceConfidence?: string;
-          identificationConfidence?: string;
-        };
-        error?: string;
-      };
-      if (data.ok && data.draft) {
-        const d = data.draft;
-        const guess = d.priceGuessSEK;
-        setDraft({
-          title: d.title ?? "",
-          description: d.description ?? "",
-          conditionNotes: d.conditionNotes ?? "",
-          keywords: (d.suggestedKeywords ?? []).join(", "),
-          price: guess ? String(Math.round((guess.low + guess.high) / 2)) : "",
-          buyout: "",
-          priceMeta: guess ? `AI-förslag ${guess.low}–${guess.high} kr` : "",
-        });
-        setCategorySuggestion(d.category ?? "");
-        setCategoryAlternates([]);
-        setValuation(null);
-        setAiMeta({
-          identificationConfidence: d.identificationConfidence ?? "?",
-          priceConfidence: d.priceConfidence ?? "?",
-        });
-        setAppState("draft");
-        toast.success("Utkast klart!");
-        suggestCategory({
-          title: d.title ?? "",
-          description: d.description ?? "",
-          keywords: (d.suggestedKeywords ?? []).join(", "),
-          condition: d.conditionNotes ?? "",
-          aiCategory: d.category ?? "",
-        });
-      } else {
-        toast.error(data.error ?? "Kunde inte analysera bilden.");
-        setAppState("camera");
-      }
-    } catch {
-      toast.error("Nätverksfel vid analys.");
-      setAppState("camera");
-    }
+  /** Apply one AI item as the editable single-item draft. */
+  function applyDraftItem(d: AiItem, photo: Photo) {
+    const guess = d.priceGuessSEK;
+    setBatchPhoto(null);
+    setBatchItems([]);
+    setImages([photo]);
+    setDraft({
+      title: d.title ?? "",
+      description: d.description ?? "",
+      conditionNotes: d.conditionNotes ?? "",
+      keywords: (d.suggestedKeywords ?? []).join(", "),
+      price: guess ? String(Math.round((guess.low + guess.high) / 2)) : "",
+      buyout: "",
+      priceMeta: guess ? `AI-förslag ${guess.low}–${guess.high} kr` : "",
+    });
+    setCategorySuggestion(d.category ?? "");
+    setCategoryAlternates([]);
+    setValuation(null);
+    setAiMeta({
+      identificationConfidence: d.identificationConfidence ?? "?",
+      priceConfidence: d.priceConfidence ?? "?",
+    });
+    setAppState("draft");
+    suggestCategory({
+      title: d.title ?? "",
+      description: d.description ?? "",
+      keywords: (d.suggestedKeywords ?? []).join(", "),
+      condition: d.conditionNotes ?? "",
+      aiCategory: d.category ?? "",
+    });
   }
 
-  /** Detect every distinct item in one photo (the "whole pile" flow). */
-  async function analyzeBatch(dataUrl: string, name: string) {
-    setBatchPhoto({ dataUrl, name });
-    setImages([]);
+  /**
+   * Analyze a photo and auto-route: the AI decides whether it's one item (→ a
+   * single draft) or several (→ the batch list). `dataUrl` is a downscaled JPEG.
+   */
+  async function analyzeAuto(dataUrl: string, name: string) {
+    const photo: Photo = { dataUrl, name };
+    setImages([photo]);
+    setBatchPhoto(photo);
     setAppState("analyzing");
     const imageBase64 = dataUrl.split(",")[1] ?? "";
     try {
@@ -422,17 +398,20 @@ export function LoppisApp() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ imageBase64, mediaType: "image/jpeg" }),
       });
-      const data = await res.json() as { ok: boolean; items?: AiItem[]; error?: string };
-      if (data.ok && data.items && data.items.length > 0) {
-        setBatchItems(data.items.map(aiToBatchItem));
-        setAppState("batch");
-        toast.success(`${data.items.length} ${data.items.length === 1 ? "sak" : "saker"} hittades.`);
-      } else if (data.ok) {
-        toast.message("Inga föremål hittades.");
-        setAppState("camera");
-      } else {
+      const data = (await res.json()) as { ok: boolean; items?: AiItem[]; error?: string };
+      if (!data.ok || !data.items || data.items.length === 0) {
         toast.error(data.error ?? "Kunde inte analysera bilden.");
         setAppState("camera");
+        return;
+      }
+      if (data.items.length === 1) {
+        applyDraftItem(data.items[0], photo);
+        toast.success("Utkast klart!");
+      } else {
+        setImages([]);
+        setBatchItems(data.items.map(aiToBatchItem));
+        setAppState("batch");
+        toast.success(`${data.items.length} saker hittades.`);
       }
     } catch {
       toast.error("Nätverksfel vid analys.");
@@ -443,8 +422,7 @@ export function LoppisApp() {
   async function onCaptureClick() {
     const dataUrl = captureFrame();
     if (!dataUrl) { toast.error("Kunde inte ta bild."); return; }
-    if (captureMode === "multi") await analyzeBatch(dataUrl, "foto.jpg");
-    else await analyzeImage(dataUrl, "foto.jpg");
+    await analyzeAuto(dataUrl, "foto.jpg");
   }
 
   async function onFileChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -456,8 +434,7 @@ export function LoppisApp() {
       return;
     }
     const dataUrl = await downscaleDataUrl(await readAsDataUrl(file));
-    if (captureMode === "multi") await analyzeBatch(dataUrl, file.name);
-    else await analyzeImage(dataUrl, file.name);
+    await analyzeAuto(dataUrl, file.name);
   }
 
   /** Open one batch item into the normal draft flow (edit / value / photos / publish). */
@@ -815,10 +792,143 @@ export function LoppisApp() {
     }
   }
 
-  function openListings() {
-    setAppState("listings");
+  async function fetchProfile() {
+    try {
+      const res = await fetch("/api/tradera/profile", { cache: "no-store" });
+      const data = await res.json();
+      setProfileAlias(data?.ok && data.connected ? data.alias ?? null : null);
+    } catch {
+      /* keep whatever we have */
+    }
+  }
+
+  function openSidebar() {
+    setSidebarOpen(true);
+    fetchProfile();
     fetchListings();
   }
+
+  const renderListingItems = (items: SellerItem[]) =>
+    items.map((it) => (
+      <a
+        key={it.id}
+        href={it.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="hover:bg-muted flex items-center gap-3 rounded-lg border p-2.5"
+      >
+        {it.thumbnail ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={it.thumbnail} alt="" className="h-11 w-11 shrink-0 rounded object-cover" />
+        ) : (
+          <div className="bg-muted h-11 w-11 shrink-0 rounded" />
+        )}
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium">{it.title ?? `Annons #${it.id}`}</p>
+          <p className="text-muted-foreground text-xs">
+            {[
+              it.price != null ? `${it.price} kr` : null,
+              it.bids != null ? `${it.bids} bud` : null,
+              it.endDate ? formatListingDate(it.endDate) : null,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </p>
+        </div>
+        <ExternalLink className="text-muted-foreground h-4 w-4 shrink-0" />
+      </a>
+    ));
+
+  // ── Sidebar (profile + my listings) ───────────────────────────────────────
+
+  const sidebar = (
+    <div className={`fixed inset-0 z-50 ${sidebarOpen ? "" : "pointer-events-none"}`}>
+      <div
+        className={`absolute inset-0 bg-black/50 transition-opacity ${sidebarOpen ? "opacity-100" : "opacity-0"}`}
+        onClick={() => setSidebarOpen(false)}
+      />
+      <aside
+        className={`bg-background absolute left-0 top-0 flex h-full w-[86%] max-w-sm flex-col shadow-xl transition-transform ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}
+      >
+        {/* Profile */}
+        <div className="border-b p-4 pt-safe-top">
+          {status?.userConnected ? (
+            <div className="flex items-center gap-3">
+              <div className="bg-primary/10 text-primary flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-lg font-semibold">
+                {(profileAlias ?? "T").charAt(0).toUpperCase()}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-semibold">
+                  {profileAlias ?? `Konto #${status.userId}`}
+                </p>
+                <p className="text-muted-foreground text-xs">
+                  Ansluten till Tradera{status.sandbox ? " · sandbox" : ""}
+                </p>
+              </div>
+              <button
+                onClick={connectTradera}
+                className="text-muted-foreground shrink-0 text-xs underline"
+              >
+                Byt konto
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              <p className="text-sm font-medium">Inte inloggad på Tradera</p>
+              <Button size="sm" onClick={connectTradera}>
+                Anslut Tradera-konto
+              </Button>
+            </div>
+          )}
+        </div>
+
+        {/* My listings */}
+        <div className="flex items-center justify-between px-4 pt-4">
+          <p className="text-sm font-semibold">Mina annonser</p>
+          {status?.userConnected && (
+            <button
+              onClick={fetchListings}
+              disabled={listingsBusy}
+              aria-label="Uppdatera"
+              className="text-muted-foreground hover:text-foreground"
+            >
+              <RefreshCw className={`h-4 w-4 ${listingsBusy ? "animate-spin" : ""}`} />
+            </button>
+          )}
+        </div>
+        <div className="flex-1 overflow-auto p-4 pt-2">
+          {!status?.userConnected ? (
+            <p className="text-muted-foreground text-sm">Logga in för att se dina annonser.</p>
+          ) : listingsBusy && !listings ? (
+            <p className="text-muted-foreground text-sm">Hämtar annonser…</p>
+          ) : listingsError ? (
+            <p className="text-sm text-red-600">{listingsError}</p>
+          ) : listings && (listings.active.length > 0 || listings.ended.length > 0) ? (
+            <div className="flex flex-col gap-5">
+              {listings.active.length > 0 && (
+                <div className="flex flex-col gap-2">
+                  <p className="text-muted-foreground text-xs font-semibold uppercase">
+                    Aktiva ({listings.active.length})
+                  </p>
+                  {renderListingItems(listings.active)}
+                </div>
+              )}
+              {listings.ended.length > 0 && (
+                <div className="flex flex-col gap-2">
+                  <p className="text-muted-foreground text-xs font-semibold uppercase">
+                    Avslutade ({listings.ended.length})
+                  </p>
+                  {renderListingItems(listings.ended)}
+                </div>
+              )}
+            </div>
+          ) : (
+            <p className="text-muted-foreground text-sm">Inga annonser hittades ännu.</p>
+          )}
+        </div>
+      </aside>
+    </div>
+  );
 
   // ── Hidden shared file input ──────────────────────────────────────────────
 
@@ -857,6 +967,13 @@ export function LoppisApp() {
 
         {/* Top status strip */}
         <div className="absolute left-0 right-0 top-0 flex items-center gap-2 p-4 pt-safe-top">
+          <button
+            onClick={openSidebar}
+            aria-label="Meny"
+            className="rounded-full bg-black/50 p-1.5 text-white/80 backdrop-blur-sm active:text-white"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
           <span className="rounded-full bg-black/50 px-2 py-0.5 text-xs font-medium text-white/80 backdrop-blur-sm">
             Bortbort
           </span>
@@ -893,38 +1010,13 @@ export function LoppisApp() {
         {appState === "analyzing" && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-4">
             <div className="h-12 w-12 animate-spin rounded-full border-4 border-white/30 border-t-white" />
-            <p className="text-lg font-medium text-white">
-              {captureMode === "multi" ? "Letar efter prylar…" : "Analyserar…"}
-            </p>
+            <p className="text-lg font-medium text-white">Analyserar…</p>
           </div>
         )}
 
         {/* Bottom controls (camera state only) */}
         {appState === "camera" && (
           <div className="absolute bottom-0 left-0 right-0 flex flex-col items-center gap-4 pb-10 pb-safe-bottom">
-            {status?.userConnected && (
-              <button
-                onClick={openListings}
-                className="rounded-full bg-black/50 px-3 py-1.5 text-sm font-medium text-white/80 backdrop-blur-sm active:text-white"
-              >
-                Mina annonser
-              </button>
-            )}
-            {/* Mode toggle: one item vs a whole pile */}
-            <div className="flex rounded-full bg-black/50 p-1 text-xs backdrop-blur-sm">
-              <button
-                onClick={() => setCaptureMode("single")}
-                className={`rounded-full px-3 py-1 font-medium ${captureMode === "single" ? "bg-white text-black" : "text-white/70"}`}
-              >
-                1 sak
-              </button>
-              <button
-                onClick={() => setCaptureMode("multi")}
-                className={`rounded-full px-3 py-1 font-medium ${captureMode === "multi" ? "bg-white text-black" : "text-white/70"}`}
-              >
-                Flera saker
-              </button>
-            </div>
             {noCam ? (
               <div className="flex flex-col items-center gap-3">
                 <Camera className="h-12 w-12 text-white/40" />
@@ -953,94 +1045,7 @@ export function LoppisApp() {
             )}
           </div>
         )}
-      </div>
-    );
-  }
-
-  // ── Listings screen (my active + past Tradera items) ──────────────────────
-
-  if (appState === "listings") {
-    const renderItems = (items: SellerItem[]) =>
-      items.map((it) => (
-        <a
-          key={it.id}
-          href={it.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="hover:bg-muted flex items-center gap-3 rounded-lg border p-3"
-        >
-          {it.thumbnail ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={it.thumbnail} alt="" className="h-12 w-12 shrink-0 rounded object-cover" />
-          ) : (
-            <div className="bg-muted h-12 w-12 shrink-0 rounded" />
-          )}
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium">{it.title ?? `Annons #${it.id}`}</p>
-            <p className="text-muted-foreground text-xs">
-              {[
-                it.price != null ? `${it.price} kr` : null,
-                it.bids != null ? `${it.bids} bud` : null,
-                it.endDate ? formatListingDate(it.endDate) : null,
-              ]
-                .filter(Boolean)
-                .join(" · ")}
-            </p>
-          </div>
-          <ExternalLink className="text-muted-foreground h-4 w-4 shrink-0" />
-        </a>
-      ));
-
-    const isEmpty =
-      listings && listings.active.length === 0 && listings.ended.length === 0;
-
-    return (
-      <div className="min-h-dvh bg-background">
-        <div className="sticky top-0 z-10 flex items-center gap-3 border-b bg-background/95 p-4 backdrop-blur">
-          <button
-            onClick={() => setAppState("camera")}
-            className="text-muted-foreground hover:text-foreground flex items-center gap-1 text-sm"
-          >
-            <ChevronLeft className="h-4 w-4" />
-            Tillbaka
-          </button>
-          <p className="flex-1 text-sm font-semibold">Mina annonser</p>
-          <button
-            onClick={fetchListings}
-            disabled={listingsBusy}
-            aria-label="Uppdatera"
-            className="text-muted-foreground hover:text-foreground"
-          >
-            <RefreshCw className={`h-4 w-4 ${listingsBusy ? "animate-spin" : ""}`} />
-          </button>
-        </div>
-
-        <div className="flex flex-col gap-6 p-4">
-          {listingsBusy && !listings && (
-            <p className="text-muted-foreground text-center text-sm">Hämtar annonser…</p>
-          )}
-          {listingsError && (
-            <p className="text-center text-sm text-red-600">{listingsError}</p>
-          )}
-          {isEmpty && (
-            <p className="text-muted-foreground text-center text-sm">
-              Inga annonser hittades ännu.
-            </p>
-          )}
-          {listings && listings.active.length > 0 && (
-            <div className="flex flex-col gap-2">
-              <p className="text-sm font-semibold">Aktiva ({listings.active.length})</p>
-              {renderItems(listings.active)}
-            </div>
-          )}
-          {listings && listings.ended.length > 0 && (
-            <div className="flex flex-col gap-2">
-              <p className="text-sm font-semibold">Avslutade ({listings.ended.length})</p>
-              {renderItems(listings.ended)}
-            </div>
-          )}
-          <p className="text-muted-foreground text-center font-mono text-[10px]">{VERSION_LABEL}</p>
-        </div>
+        {sidebar}
       </div>
     );
   }
