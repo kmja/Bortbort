@@ -249,6 +249,9 @@ export function LoppisApp() {
   const [itemDetail, setItemDetail] = useState<ItemDetails | null>(null);
   const [itemDetailBusy, setItemDetailBusy] = useState(false);
   const [endBusy, setEndBusy] = useState(false);
+  const [editOpening, setEditOpening] = useState("");
+  const [editBin, setEditBin] = useState("");
+  const [priceBusy, setPriceBusy] = useState(false);
   // Gates the camera until we've checked for a restorable draft, so returning
   // from the connect flow doesn't briefly flash the viewfinder.
   const [restoring, setRestoring] = useState(true);
@@ -827,6 +830,8 @@ export function LoppisApp() {
   async function openItem(it: SellerItem) {
     setSelectedItem(it);
     setItemDetail(null);
+    setEditOpening(it.price != null ? String(it.price) : "");
+    setEditBin("");
     setItemDetailBusy(true);
     try {
       const res = await fetch(`/api/tradera/item?id=${it.id}`, { cache: "no-store" });
@@ -836,6 +841,32 @@ export function LoppisApp() {
       /* fall back to the summary we already have */
     } finally {
       setItemDetailBusy(false);
+    }
+  }
+
+  async function savePrices(item: SellerItem) {
+    const opening = Number(editOpening.replace(/[^\d]/g, ""));
+    if (!opening) { toast.error("Ange ett utropspris."); return; }
+    const bin = Number(editBin.replace(/[^\d]/g, "")) || 0;
+    if (bin && bin < opening) { toast.error("Köp nu måste vara minst utropspriset."); return; }
+    setPriceBusy(true);
+    try {
+      const res = await fetch("/api/tradera/price-update", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ itemId: item.id, openingPrice: opening, binPrice: bin || undefined }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        toast.success("Priset uppdaterades.");
+        fetchListings();
+      } else {
+        toast.error(data.error ?? "Kunde inte uppdatera priset.");
+      }
+    } catch {
+      toast.error("Nätverksfel.");
+    } finally {
+      setPriceBusy(false);
     }
   }
 
@@ -967,14 +998,50 @@ export function LoppisApp() {
               </a>
 
               {listings?.active.some((a) => a.id === selectedItem.id) && (
-                <Button
-                  variant="destructive"
-                  onClick={() => cancelListing(selectedItem)}
-                  disabled={endBusy}
-                  className="mt-6 w-full"
-                >
-                  {endBusy ? "Avbryter…" : "Avbryt annons"}
-                </Button>
+                <>
+                  <div className="mt-6 flex flex-col gap-2 border-t pt-4">
+                    <p className="text-sm font-semibold">Ändra pris</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="flex flex-col gap-1">
+                        <span className="text-muted-foreground text-xs">Utropspris (kr)</span>
+                        <Input
+                          inputMode="numeric"
+                          value={editOpening}
+                          onChange={(e) => setEditOpening(e.target.value)}
+                          placeholder="0"
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <span className="text-muted-foreground text-xs">Köp nu (kr)</span>
+                        <Input
+                          inputMode="numeric"
+                          value={editBin}
+                          onChange={(e) => setEditBin(e.target.value)}
+                          placeholder="Valfritt"
+                        />
+                      </div>
+                    </div>
+                    <Button
+                      variant="outline"
+                      onClick={() => savePrices(selectedItem)}
+                      disabled={priceBusy}
+                    >
+                      {priceBusy ? "Sparar…" : "Spara pris"}
+                    </Button>
+                    <p className="text-muted-foreground text-xs">
+                      Tradera tillåter inte alla prisändringar när det finns bud.
+                    </p>
+                  </div>
+
+                  <Button
+                    variant="destructive"
+                    onClick={() => cancelListing(selectedItem)}
+                    disabled={endBusy}
+                    className="mt-4 w-full"
+                  >
+                    {endBusy ? "Avbryter…" : "Avbryt annons"}
+                  </Button>
+                </>
               )}
             </div>
           </div>

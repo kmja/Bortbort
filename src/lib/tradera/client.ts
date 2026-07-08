@@ -229,6 +229,31 @@ export async function endItem(
 }
 
 /**
+ * RestrictedService.SetPricesOnNonShopItems — updates the prices on one of the
+ * seller's active (non-shop) items. Element casing matches the WSDL exactly:
+ * itemId, openingPrice, ReservedPrice, BinPrice (0 = none). Tradera enforces its
+ * own rules (e.g. can't raise the opening price once there are bids).
+ */
+export async function setItemPrices(
+  itemId: number,
+  prices: { openingPrice: number; reservedPrice?: number; binPrice?: number },
+  userAuth: TraderaUserAuth,
+  signal?: AbortSignal,
+): Promise<unknown> {
+  return callTradera<unknown>({
+    service: "restricted",
+    operation: "SetPricesOnNonShopItems",
+    bodyInnerXml:
+      xmlElement("itemId", itemId) +
+      xmlElement("openingPrice", prices.openingPrice) +
+      xmlElement("ReservedPrice", prices.reservedPrice ?? 0) +
+      xmlElement("BinPrice", prices.binPrice ?? 0),
+    userAuth,
+    signal,
+  });
+}
+
+/**
  * A single, deliberately cheap, clearly-labelled test listing for the auth spike.
  * Keep it sandbox-only. Set TRADERA_TEST_CATEGORY_ID to a valid sandbox category id.
  */
