@@ -14,7 +14,7 @@ that can reach `api.tradera.com` to fully confirm — see "Going live (Tradera)"
 ## Tech stack
 
 - **Next.js 16** (App Router) + **TypeScript** + **Tailwind v4** + **shadcn/ui**
-- Next.js **route handlers** as a thin backend so Tradera and Anthropic secrets
+- Next.js **route handlers** as a thin backend so Tradera and Gemini secrets
   never reach the client.
 
 ## What works vs. what needs real credentials
@@ -26,7 +26,7 @@ that can reach `api.tradera.com` to fully confirm — see "Going live (Tradera)"
 | Tradera config + **multi-app key pooling** | ✅ Verified locally (status reports the pool size) |
 | Tradera token-login URL | ✅ Verified — generated URL matches the portal's Authorization URL byte-for-byte |
 | Blocket / Facebook handoff (copy text, deep-link, download photo) | ✅ Client-side, works now |
-| Anthropic identify/draft route (`/api/identify`) | ✅ Functional with a real `ANTHROPIC_API_KEY` (defaults to cheap Haiku 4.5) |
+| Gemini identify/draft route (`/api/identify`) | ✅ Functional with a real `GEMINI_API_KEY` (defaults to cheap gemini-2.5-flash) |
 | Tradera pricing query (`/api/tradera/price`) | ⚠️ Built; uses **active asking** prices, not sold — see below |
 | Live Tradera SOAP (`GetOfficialTime`, `Search`, `FetchToken`, `AddItem`) | ⚠️ **Not yet confirmed live** — build env can't reach `api.tradera.com` |
 
@@ -57,7 +57,7 @@ npm run dev                  # http://localhost:3000
 The home page is the actual flow:
 
 1. **Steg 1 — Fota & identifiera**: upload a photo (+ optional hint) →
-   `POST /api/identify` (needs `ANTHROPIC_API_KEY`) → a structured draft.
+   `POST /api/identify` (needs `GEMINI_API_KEY`) → a structured draft.
 2. **Steg 2 — Granska utkast**: every field is editable; **Hämta prisförslag**
    calls `GET /api/tradera/price` and fills the price.
 3. **Steg 3 — Publicera på Tradera (API)**: enter a Tradera category id and
@@ -97,7 +97,7 @@ latency to Swedish users and Tradera — change or remove `regions` for your pla
 2. Add environment variables (Project Settings → Environment Variables):
    - `TRADERA_APP_ID`, `TRADERA_APP_KEY`, `TRADERA_PUBLIC_KEY` (primary app)
    - `TRADERA_APP_ID_2` / `…_KEY_2` / `…_PUBLIC_KEY_2`, `…_3` for the key pool
-   - `ANTHROPIC_API_KEY` (+ optional `ANTHROPIC_MODEL`)
+   - `GEMINI_API_KEY` (+ optional `GEMINI_MODEL`)
    - `TRADERA_SANDBOX` (`true`/`false`), `TRADERA_TEST_CATEGORY_ID` (optional)
    - `APP_BASE_URL` is derived from the Vercel production URL automatically.
 3. Deploy, then set each Tradera app's **Accept Return URL** to
@@ -135,10 +135,10 @@ src/
         list/route.ts            # AddItem — publishes the current draft
         price/route.ts           # price suggestion from Tradera comparables
         categories/route.ts      # flattened category list for the picker
-      identify/route.ts          # Anthropic vision -> structured Swedish draft
+      identify/route.ts          # Gemini vision -> structured Swedish draft
   lib/
     tradera/                     # config, types, SOAP, client, auth, pricing, categories
-    anthropic/                   # client + identify/draft logic
+    gemini/                      # client + identify/draft/valuation logic
     handoff.ts                   # Blocket/FB text formatting + create-page links
     api-response.ts              # error -> JSON mapping for routes
   components/

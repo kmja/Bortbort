@@ -1,8 +1,8 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { AnthropicConfigError } from "@/lib/anthropic/client";
-import { identifyMultiple, SUPPORTED_IMAGE_TYPES } from "@/lib/anthropic/draft";
+import { GeminiConfigError } from "@/lib/gemini/client";
+import { identifyMultiple, SUPPORTED_IMAGE_TYPES } from "@/lib/gemini/draft";
 
 // Detecting several items in one image takes longer than a single one.
 export const maxDuration = 90;
@@ -46,13 +46,13 @@ export async function POST(request: NextRequest) {
     });
     return NextResponse.json({ ok: true, items: result.items });
   } catch (err) {
-    if (err instanceof AnthropicConfigError) {
+    if (err instanceof GeminiConfigError) {
       return NextResponse.json(
         { ok: false, kind: "config", error: err.message },
         { status: 400 },
       );
     }
     const message = err instanceof Error ? err.message : "Unknown error";
-    return NextResponse.json({ ok: false, kind: "anthropic", error: message }, { status: 502 });
+    return NextResponse.json({ ok: false, kind: "gemini", error: message }, { status: 502 });
   }
 }

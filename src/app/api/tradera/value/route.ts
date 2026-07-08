@@ -1,8 +1,8 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { AnthropicConfigError } from "@/lib/anthropic/client";
-import { valuateItem } from "@/lib/anthropic/valuation";
+import { GeminiConfigError } from "@/lib/gemini/client";
+import { valuateItem } from "@/lib/gemini/valuation";
 import { priceStats } from "@/lib/tradera/pricing";
 import { searchComparables } from "@/lib/tradera/pricing";
 import { fetchSoldComparables } from "@/lib/tradera/sold";
@@ -75,7 +75,7 @@ export async function POST(request: NextRequest) {
       active: { count: activeStats.count, median: activeStats.median, p25: activeStats.p25, p75: activeStats.p75 },
     });
   } catch (err) {
-    if (err instanceof AnthropicConfigError) {
+    if (err instanceof GeminiConfigError) {
       return NextResponse.json(
         { ok: false, kind: "config", error: err.message },
         { status: 400 },

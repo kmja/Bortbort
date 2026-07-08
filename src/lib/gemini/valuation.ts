@@ -1,31 +1,16 @@
 import "server-only";
 
-import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 
 import type { PriceStats } from "@/lib/tradera/pricing";
-import { DRAFT_MODEL, getAnthropicClient } from "./client";
+import { geminiGenerateJson, VALUATION_RESPONSE_SCHEMA } from "./client";
 
 /** A well-reasoned valuation: an opening (start) price and a buyout (Köp nu). */
 export const ValuationSchema = z.object({
-  openingPriceSEK: z
-    .number()
-    .describe(
-      "Rekommenderat utropspris/startpris i SEK. Ofta något under förväntat slutpris för att locka bud.",
-    ),
-  buyoutPriceSEK: z
-    .number()
-    .describe(
-      "Rekommenderat Köp nu-pris (buyout) i SEK. Nära toppen av vad liknande föremål faktiskt sålts för.",
-    ),
-  confidence: z
-    .enum(["low", "medium", "high"])
-    .describe("Hög endast med gott om verkliga slutpriser; låg utan jämförelsedata."),
-  reasoning: z
-    .string()
-    .describe(
-      "1–3 meningar på svenska: hur priset härleddes och vilken data som användes (slutpriser vs utropspriser).",
-    ),
+  openingPriceSEK: z.number(),
+  buyoutPriceSEK: z.number(),
+  confidence: z.enum(["low", "medium", "high"]),
+  reasoning: z.string(),
 });
 
 export type Valuation = z.infer<typeof ValuationSchema>;
@@ -81,23 +66,16 @@ function buildPrompt(input: ValuationInput): string {
 
 /** Produces an opening + buyout recommendation from comparable-price statistics. */
 export async function valuateItem(input: ValuationInput): Promise<Valuation> {
-  const client = getAnthropicClient();
-
-  const message = await client.messages.parse({
-    model: DRAFT_MODEL,
-    max_tokens: 1000,
-    output_config: { format: zodOutputFormat(ValuationSchema) },
-    system: [
-      { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
-    ],
-    messages: [{ role: "user", content: [{ type: "text", text: buildPrompt(input) }] }],
+  const json = await geminiGenerateJson({
+    system: SYSTEM_PROMPT,
+    userParts: [{ text: buildPrompt(input) }],
+    responseSchema: VALUATION_RESPONSE_SCHEMA,
+    maxOutputTokens: 1024,
+    temperature: 0.4,
   });
 
-  if (!message.parsed_output) {
-    throw new Error("Modellen kunde inte skapa en värdering.");
-  }
+  const v = ValuationSchema.parse(json);
   // Guard the invariant the model is told to keep.
-  const v = message.parsed_output;
   if (v.buyoutPriceSEK < v.openingPriceSEK) {
     v.buyoutPriceSEK = v.openingPriceSEK;
   }

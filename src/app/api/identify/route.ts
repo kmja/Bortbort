@@ -1,8 +1,8 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { AnthropicConfigError } from "@/lib/anthropic/client";
-import { identifyAndDraft, SUPPORTED_IMAGE_TYPES } from "@/lib/anthropic/draft";
+import { GeminiConfigError } from "@/lib/gemini/client";
+import { identifyAndDraft, SUPPORTED_IMAGE_TYPES } from "@/lib/gemini/draft";
 
 // Vision + adaptive thinking can take a while; give the function room.
 export const maxDuration = 60;
@@ -47,7 +47,7 @@ export async function POST(request: NextRequest) {
     });
     return NextResponse.json({ ok: true, draft });
   } catch (err) {
-    if (err instanceof AnthropicConfigError) {
+    if (err instanceof GeminiConfigError) {
       return NextResponse.json(
         { ok: false, kind: "config", error: err.message },
         { status: 400 },
@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
     }
     const message = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json(
-      { ok: false, kind: "anthropic", error: message },
+      { ok: false, kind: "gemini", error: message },
       { status: 502 },
     );
   }
