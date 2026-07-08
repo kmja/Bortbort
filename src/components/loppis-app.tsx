@@ -16,7 +16,7 @@ import { VERSION_LABEL } from "@/lib/version";
 
 const SUPPORTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 
-type AppState = "camera" | "analyzing" | "draft";
+type AppState = "camera" | "analyzing" | "draft" | "batch";
 type Busy = "value" | "ping" | "listing" | "publish" | null;
 
 interface TraderaStatus {
@@ -50,6 +50,41 @@ interface Valuation {
   basis: string;
   soldCount: number;
   activeCount: number;
+}
+
+/** One detected item in the multi-item (batch) flow. */
+interface BatchItem {
+  title: string;
+  description: string;
+  conditionNotes: string;
+  keywords: string;
+  category: string;
+  price: string;
+  buyout: string;
+  valued: boolean;
+}
+
+interface AiItem {
+  category?: string;
+  title?: string;
+  description?: string;
+  conditionNotes?: string;
+  suggestedKeywords?: string[];
+  priceGuessSEK?: { low: number; high: number };
+}
+
+function aiToBatchItem(d: AiItem): BatchItem {
+  const guess = d.priceGuessSEK;
+  return {
+    title: d.title ?? "",
+    description: d.description ?? "",
+    conditionNotes: d.conditionNotes ?? "",
+    keywords: (d.suggestedKeywords ?? []).join(", "),
+    category: d.category ?? "",
+    price: guess ? String(Math.round((guess.low + guess.high) / 2)) : "",
+    buyout: "",
+    valued: false,
+  };
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -168,6 +203,10 @@ export function LoppisApp() {
   const [traderaCategoryId, setTraderaCategoryId] = useState("");
   const [categorySuggestion, setCategorySuggestion] = useState("");
   const [valuation, setValuation] = useState<Valuation | null>(null);
+  const [captureMode, setCaptureMode] = useState<"single" | "multi">("single");
+  const [batchItems, setBatchItems] = useState<BatchItem[]>([]);
+  const [batchPhoto, setBatchPhoto] = useState<Photo | null>(null);
+  const [batchOpenIndex, setBatchOpenIndex] = useState<number | null>(null);
   const [diag, setDiag] = useState<{ title: string; data: unknown } | null>(null);
   const [connectError, setConnectError] = useState<string | null>(null);
   // Gates the camera until we've checked for a restorable draft, so returning
@@ -309,10 +348,41 @@ export function LoppisApp() {
     }
   }
 
+  /** Detect every distinct item in one photo (the "whole pile" flow). */
+  async function analyzeBatch(dataUrl: string, name: string) {
+    setBatchPhoto({ dataUrl, name });
+    setImages([]);
+    setAppState("analyzing");
+    const imageBase64 = dataUrl.split(",")[1] ?? "";
+    try {
+      const res = await fetch("/api/identify-batch", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ imageBase64, mediaType: "image/jpeg" }),
+      });
+      const data = await res.json() as { ok: boolean; items?: AiItem[]; error?: string };
+      if (data.ok && data.items && data.items.length > 0) {
+        setBatchItems(data.items.map(aiToBatchItem));
+        setAppState("batch");
+        toast.success(`${data.items.length} ${data.items.length === 1 ? "sak" : "saker"} hittades.`);
+      } else if (data.ok) {
+        toast.message("Inga föremål hittades.");
+        setAppState("camera");
+      } else {
+        toast.error(data.error ?? "Kunde inte analysera bilden.");
+        setAppState("camera");
+      }
+    } catch {
+      toast.error("Nätverksfel vid analys.");
+      setAppState("camera");
+    }
+  }
+
   async function onCaptureClick() {
     const dataUrl = captureFrame();
     if (!dataUrl) { toast.error("Kunde inte ta bild."); return; }
-    await analyzeImage(dataUrl, "foto.jpg");
+    if (captureMode === "multi") await analyzeBatch(dataUrl, "foto.jpg");
+    else await analyzeImage(dataUrl, "foto.jpg");
   }
 
   async function onFileChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -324,7 +394,91 @@ export function LoppisApp() {
       return;
     }
     const dataUrl = await downscaleDataUrl(await readAsDataUrl(file));
-    await analyzeImage(dataUrl, file.name);
+    if (captureMode === "multi") await analyzeBatch(dataUrl, file.name);
+    else await analyzeImage(dataUrl, file.name);
+  }
+
+  /** Open one batch item into the normal draft flow (edit / value / photos / publish). */
+  function openBatchItem(i: number) {
+    const it = batchItems[i];
+    setDraft({
+      title: it.title,
+      description: it.description,
+      conditionNotes: it.conditionNotes,
+      keywords: it.keywords,
+      price: it.price,
+      buyout: it.buyout,
+      priceMeta: "",
+    });
+    setCategorySuggestion(it.category);
+    setImages(batchPhoto ? [batchPhoto] : []);
+    setValuation(null);
+    setAiMeta(null);
+    setTraderaCategoryId("");
+    setBatchOpenIndex(i);
+    setAppState("draft");
+  }
+
+  /** Return from an opened batch item to the list, saving edits back into it. */
+  function backToBatch() {
+    if (batchOpenIndex !== null && draft) {
+      const d = draft;
+      setBatchItems((prev) =>
+        prev.map((it, i) =>
+          i === batchOpenIndex
+            ? { ...it, title: d.title, description: d.description, conditionNotes: d.conditionNotes, keywords: d.keywords, price: d.price, buyout: d.buyout }
+            : it,
+        ),
+      );
+    }
+    setBatchOpenIndex(null);
+    setDraft(null);
+    setImages([]);
+    setValuation(null);
+    setAiMeta(null);
+    setTraderaCategoryId("");
+    setCategorySuggestion("");
+    setAppState("batch");
+  }
+
+  /** Run the proper (sold + AI) valuation for every batch item, sequentially. */
+  async function valuateAll() {
+    if (batchItems.length === 0) return;
+    setBusy("value");
+    try {
+      for (let i = 0; i < batchItems.length; i++) {
+        const it = batchItems[i];
+        const query = it.title.trim() || it.keywords.trim();
+        if (!query) continue;
+        try {
+          const res = await fetch("/api/tradera/value", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              title: it.title,
+              keywords: it.keywords,
+              condition: it.conditionNotes,
+              description: it.description,
+            }),
+          });
+          const data = await res.json();
+          if (data.ok) {
+            setBatchItems((prev) =>
+              prev.map((x, idx) =>
+                idx === i
+                  ? { ...x, price: String(data.openingPriceSEK), buyout: String(data.buyoutPriceSEK), valued: true }
+                  : x,
+              ),
+            );
+          }
+        } catch {
+          /* skip this item, keep going */
+        }
+      }
+      toast.success("Värdering klar.");
+    } finally {
+      setBusy(null);
+    }
   }
 
   /** Append more photos to the current listing (no re-analysis). */
@@ -353,8 +507,35 @@ export function LoppisApp() {
     setTraderaCategoryId("");
     setCategorySuggestion("");
     setValuation(null);
+    setBatchItems([]);
+    setBatchPhoto(null);
+    setBatchOpenIndex(null);
     setDiag(null);
     setAppState("camera");
+  }
+
+  /** After a successful publish: drop the item from the batch and return to the
+   *  list if more remain, otherwise start fresh. */
+  function afterPublish() {
+    if (batchOpenIndex === null) {
+      reset();
+      return;
+    }
+    const remaining = batchItems.filter((_, i) => i !== batchOpenIndex);
+    setBatchOpenIndex(null);
+    setBatchItems(remaining);
+    setDraft(null);
+    setAiMeta(null);
+    setImages([]);
+    setTraderaCategoryId("");
+    setCategorySuggestion("");
+    setValuation(null);
+    if (remaining.length > 0) {
+      setAppState("batch");
+    } else {
+      setBatchPhoto(null);
+      setAppState("camera");
+    }
   }
 
   function setField(key: keyof EditableDraft, value: string) {
@@ -448,7 +629,7 @@ export function LoppisApp() {
             ? `Annons publicerad på Tradera! (${attached} bild${attached === 1 ? "" : "er"})`
             : "Annons publicerad på Tradera!",
         );
-        reset();
+        afterPublish();
       } else {
         toast.error(data.error ?? "Kunde inte publicera på Tradera.");
       }
@@ -520,10 +701,10 @@ export function LoppisApp() {
             muted
             playsInline
           />
-        ) : appState === "analyzing" && images[0] ? (
+        ) : appState === "analyzing" && (images[0] ?? batchPhoto) ? (
           // Captured photo shown while analyzing
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={images[0].dataUrl} alt="" className="h-full w-full object-cover opacity-40" />
+          <img src={(images[0] ?? batchPhoto)!.dataUrl} alt="" className="h-full w-full object-cover opacity-40" />
         ) : null}
 
         {/* Top status strip */}
@@ -564,13 +745,30 @@ export function LoppisApp() {
         {appState === "analyzing" && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-4">
             <div className="h-12 w-12 animate-spin rounded-full border-4 border-white/30 border-t-white" />
-            <p className="text-lg font-medium text-white">Analyserar…</p>
+            <p className="text-lg font-medium text-white">
+              {captureMode === "multi" ? "Letar efter prylar…" : "Analyserar…"}
+            </p>
           </div>
         )}
 
         {/* Bottom controls (camera state only) */}
         {appState === "camera" && (
           <div className="absolute bottom-0 left-0 right-0 flex flex-col items-center gap-4 pb-10 pb-safe-bottom">
+            {/* Mode toggle: one item vs a whole pile */}
+            <div className="flex rounded-full bg-black/50 p-1 text-xs backdrop-blur-sm">
+              <button
+                onClick={() => setCaptureMode("single")}
+                className={`rounded-full px-3 py-1 font-medium ${captureMode === "single" ? "bg-white text-black" : "text-white/70"}`}
+              >
+                1 sak
+              </button>
+              <button
+                onClick={() => setCaptureMode("multi")}
+                className={`rounded-full px-3 py-1 font-medium ${captureMode === "multi" ? "bg-white text-black" : "text-white/70"}`}
+              >
+                Flera saker
+              </button>
+            </div>
             {noCam ? (
               <div className="flex flex-col items-center gap-3">
                 <Camera className="h-12 w-12 text-white/40" />
@@ -599,6 +797,69 @@ export function LoppisApp() {
             )}
           </div>
         )}
+      </div>
+    );
+  }
+
+  // ── Batch screen (multiple items from one photo) ──────────────────────────
+
+  if (appState === "batch") {
+    return (
+      <div className="min-h-dvh bg-background">
+        {fileInput}
+        <div className="sticky top-0 z-10 flex items-center gap-3 border-b bg-background/95 p-4 backdrop-blur">
+          {batchPhoto && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={batchPhoto.dataUrl}
+              alt="Taget foto"
+              className="h-12 w-12 shrink-0 rounded-lg object-cover"
+            />
+          )}
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold">
+              {batchItems.length} {batchItems.length === 1 ? "sak" : "saker"}
+            </p>
+            <p className="text-muted-foreground text-xs">Öppna en för att värdera & sälja</p>
+          </div>
+          <button
+            onClick={reset}
+            className="text-muted-foreground hover:text-foreground flex items-center gap-1 text-xs"
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            Nytt foto
+          </button>
+        </div>
+
+        <div className="flex flex-col gap-3 p-4 pb-10">
+          <Button
+            variant="secondary"
+            onClick={valuateAll}
+            disabled={busy !== null}
+            className="w-full"
+          >
+            <Sparkles className={busy === "value" ? "animate-pulse" : ""} />
+            {busy === "value" ? "Värderar alla…" : "Värdera alla (Tradera)"}
+          </Button>
+
+          {batchItems.map((it, i) => (
+            <div key={i} className="flex items-center gap-3 rounded-lg border p-3">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium">{it.title || "Namnlös pryl"}</p>
+                <p className="text-muted-foreground text-xs">
+                  {it.price ? `${it.price} kr` : "–"}
+                  {it.buyout ? ` · Köp nu ${it.buyout} kr` : ""}
+                  {it.valued ? " · värderad" : ""}
+                </p>
+              </div>
+              <Button size="sm" onClick={() => openBatchItem(i)}>
+                Skapa annons
+              </Button>
+            </div>
+          ))}
+
+          <p className="text-muted-foreground text-center font-mono text-[10px]">{VERSION_LABEL}</p>
+        </div>
       </div>
     );
   }
@@ -636,12 +897,12 @@ export function LoppisApp() {
           )}
         </div>
         <button
-          onClick={reset}
+          onClick={batchOpenIndex !== null ? backToBatch : reset}
           className="text-muted-foreground hover:text-foreground flex items-center gap-1 text-xs"
-          aria-label="Ta nytt foto"
+          aria-label={batchOpenIndex !== null ? "Tillbaka till listan" : "Ta nytt foto"}
         >
           <RotateCcw className="h-3.5 w-3.5" />
-          Nytt foto
+          {batchOpenIndex !== null ? "Tillbaka" : "Nytt foto"}
         </button>
       </div>
 

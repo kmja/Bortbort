@@ -54,6 +54,15 @@ export const ListingDraftSchema = z.object({
 
 export type ListingDraft = z.infer<typeof ListingDraftSchema>;
 
+/** Multiple distinct items detected in a single photo. */
+export const MultiListingDraftSchema = z.object({
+  items: z
+    .array(ListingDraftSchema)
+    .describe("Ett utkast per distinkt säljbart föremål i bilden."),
+});
+
+export type MultiListingDraft = z.infer<typeof MultiListingDraftSchema>;
+
 export interface IdentifyInput {
   /** Base64-encoded image data (no data: URL prefix). */
   imageBase64: string;
@@ -123,6 +132,53 @@ export async function identifyAndDraft(input: IdentifyInput): Promise<ListingDra
 
   if (!message.parsed_output) {
     throw new Error("Modellen kunde inte skapa ett strukturerat utkast.");
+  }
+  return message.parsed_output;
+}
+
+const MULTI_SYSTEM_PROMPT = `${SYSTEM_PROMPT}
+
+VIKTIGT: Bilden kan innehålla FLERA olika prylar (t.ex. ett bord fullt av loppisfynd). Identifiera VARJE distinkt säljbart föremål för sig och returnera ett separat utkast per föremål i "items". Slå inte ihop olika prylar till en annons. Om det tydligt bara finns ett föremål, returnera ett enda utkast. Hoppa över ointressanta bakgrundsföremål.`;
+
+/**
+ * Identifies EVERY distinct sellable item in one photo and returns a draft for
+ * each. Used by the "photograph a whole pile" batch flow.
+ */
+export async function identifyMultiple(input: IdentifyInput): Promise<MultiListingDraft> {
+  const client = getAnthropicClient();
+
+  const message = await client.messages.parse({
+    model: DRAFT_MODEL,
+    max_tokens: 4000,
+    output_config: { format: zodOutputFormat(MultiListingDraftSchema) },
+    system: [
+      { type: "text", text: MULTI_SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
+    ],
+    messages: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: input.mediaType,
+              data: input.imageBase64,
+            },
+          },
+          {
+            type: "text",
+            text: input.hint
+              ? `Säljarens ledtråd: ${input.hint}\n\nIdentifiera varje separat pryl i bilden och skapa ett utkast per pryl.`
+              : "Identifiera varje separat pryl i bilden och skapa ett utkast per pryl.",
+          },
+        ],
+      },
+    ],
+  });
+
+  if (!message.parsed_output) {
+    throw new Error("Modellen kunde inte identifiera föremålen.");
   }
   return message.parsed_output;
 }
