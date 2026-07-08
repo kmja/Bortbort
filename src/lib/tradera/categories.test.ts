@@ -28,20 +28,29 @@ describe("parseCategories", () => {
     };
 
     const flat = parseCategories(result);
-    const byId = Object.fromEntries(flat.map((c) => [c.id, c.path]));
+    const byId = Object.fromEntries(flat.map((c) => [c.id, c]));
 
     expect(flat).toHaveLength(4);
-    expect(byId[1]).toBe("Hem & Hushåll");
-    expect(byId[10]).toBe("Hem & Hushåll > Möbler");
-    expect(byId[100]).toBe("Hem & Hushåll > Möbler > Stolar & fåtöljer");
-    expect(byId[2]).toBe("Elektronik");
+    expect(byId[1].path).toBe("Hem & Hushåll");
+    expect(byId[1].parentId).toBeNull();
+    expect(byId[1].leaf).toBe(false);
+    expect(byId[10].path).toBe("Hem & Hushåll > Möbler");
+    expect(byId[10].parentId).toBe(1);
+    expect(byId[100].path).toBe("Hem & Hushåll > Möbler > Stolar & fåtöljer");
+    expect(byId[100].parentId).toBe(10);
+    expect(byId[100].leaf).toBe(true);
+    expect(byId[2].path).toBe("Elektronik");
+    expect(byId[2].parentId).toBeNull();
+    expect(byId[2].leaf).toBe(true);
   });
 
   it("handles a single child element (not wrapped in an array)", () => {
     const result = {
       GetCategoriesResult: { Category: { Id: 5, Name: "Böcker" } },
     };
-    expect(parseCategories(result)).toEqual([{ id: 5, name: "Böcker", path: "Böcker" }]);
+    expect(parseCategories(result)).toEqual([
+      { id: 5, name: "Böcker", path: "Böcker", parentId: null, leaf: true },
+    ]);
   });
 
   it("returns [] for empty or missing input", () => {
