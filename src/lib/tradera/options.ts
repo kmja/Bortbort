@@ -62,12 +62,11 @@ const TTL_MS = 1000 * 60 * 60 * 12;
 
 export async function getListingOptions(signal?: AbortSignal): Promise<ListingOptions> {
   if (cache && Date.now() - cache.at < TTL_MS) return cache.data;
-  const [shipping, payment] = await Promise.all([
-    fetchOptions("GetShippingOptions", signal).catch(() => []),
-    fetchOptions("GetPaymentOptions", signal).catch(() => []),
-  ]);
-  const data: ListingOptions = { shipping, payment };
-  if (shipping.length > 0 || payment.length > 0) cache = { at: Date.now(), data };
+  // GetPaymentOptions isn't a PublicService method and payment isn't required on
+  // AddItem, so we only fetch shipping products (weight-based; often empty).
+  const shipping = await fetchOptions("GetShippingOptions", signal).catch(() => []);
+  const data: ListingOptions = { shipping, payment: [] };
+  if (shipping.length > 0) cache = { at: Date.now(), data };
   return data;
 }
 

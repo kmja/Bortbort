@@ -85,14 +85,16 @@ export async function POST(request: NextRequest) {
       .filter((x): x is { format: TraderaImageFormat; base64: string } => x !== null);
     const hasImages = images.length > 0;
 
-    // Shipping + payment require real ids from Tradera; fetch and default them so
-    // the seller doesn't have to. A shipping option is mandatory (non-empty).
+    // A shipping option is mandatory. The account's GetShippingOptions is often
+    // empty (no weight-based profile), so use TRADERA_SHIPPING_OPTION_ID when set
+    // (tunable without a redeploy), else the first fetched product, else a default.
     const options = await getListingOptions().catch(() => ({ shipping: [], payment: [] }));
-    const shippingOptionId = options.shipping[0]?.id;
-    const shippingOptions = shippingOptionId
-      ? [{ shippingOptionId, cost: parsed.data.shippingCost ?? 0 }]
-      : [];
-    const paymentOptionIds = options.payment.map((o) => o.id);
+    const envShip = Number(process.env.TRADERA_SHIPPING_OPTION_ID);
+    const shippingOptionId =
+      Number.isFinite(envShip) && envShip > 0 ? envShip : options.shipping[0]?.id ?? 1;
+    const shippingOptions = [
+      { shippingOptionId, cost: parsed.data.shippingCost ?? 0 },
+    ];
 
     const req: AddItemRequest = {
       title: parsed.data.title,
@@ -105,23 +107,10 @@ export async function POST(request: NextRequest) {
       buyItNowPrice: parsed.data.buyItNowPrice ?? 0,
       acceptedBidderId: 1, // Sweden
       shippingOptions,
-      paymentOptionIds,
       shippingCondition: "Köparen betalar frakten om inget annat anges.",
       // Staged (commit later) only when we have images to attach first.
       autoCommit: !hasImages,
     };
-
-    if (shippingOptions.length === 0) {
-      return NextResponse.json(
-        {
-          ok: false,
-          kind: "config",
-          error:
-            "Kunde inte hämta giltiga fraktalternativ från Tradera (tomt). Kör 'Testa frakt/betalning' i diagnostiken.",
-        },
-        { status: 502 },
-      );
-    }
 
     const result = await addItem(req, userAuth);
 
