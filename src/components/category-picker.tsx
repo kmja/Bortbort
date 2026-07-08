@@ -4,14 +4,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Search, X } from "lucide-react";
 
 import { Input } from "@/components/ui/input";
-
-interface Category {
-  id: number;
-  name: string;
-  path: string;
-  parentId: number | null;
-  leaf: boolean;
-}
+import {
+  type CategoryNode as Category,
+  normalizeCat,
+  rankByBreadcrumb,
+  shortPath,
+} from "@/lib/tradera/category-match";
 
 interface CategoryPickerProps {
   /** Selected category id, as a string (the source of truth lives in the parent). */
@@ -19,50 +17,6 @@ interface CategoryPickerProps {
   onChange: (id: string) => void;
   /** AI category breadcrumb (e.g. "Hem & Hushåll > Möbler") to auto-select on load. */
   suggestion?: string;
-}
-
-function normalizeCat(s: string): string {
-  return s
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "") // strip diacritics so å/ä/ö compare cleanly
-    .replace(/[^a-z0-9\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-/**
- * Ranks listable (leaf) Tradera categories against an AI category breadcrumb.
- * Weights the most specific segment heaviest and rewards parent-path context so
- * "Accessoarer > Solglasögon" beats "Barnkläder > Solglasögon". Returns the top
- * `limit` above a confidence floor — the first is the auto-pick, the rest are
- * offered as one-tap alternatives.
- */
-function rankCategoryMatches(suggestion: string, leaves: Category[], limit: number): Category[] {
-  const tokens = normalizeCat(suggestion).split(" ").filter(Boolean);
-  if (tokens.length === 0) return [];
-  const leafTok = tokens[tokens.length - 1];
-  const scored: Array<{ c: Category; score: number }> = [];
-  for (const c of leaves) {
-    const nameTokens = new Set(normalizeCat(c.name).split(" ").filter(Boolean));
-    const path = normalizeCat(c.path);
-    let score = 0;
-    for (const t of tokens) {
-      if (nameTokens.has(t)) score += 10;
-      else if (path.includes(t)) score += 4; // parent-path context breaks ties
-    }
-    if (nameTokens.has(leafTok)) score += 15;
-    score += Math.min(c.path.split(">").length, 5) * 0.5;
-    if (score >= 12) scored.push({ c, score });
-  }
-  scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, limit).map((s) => s.c);
-}
-
-/** Compact label for a pill: the last two path segments, e.g. "Accessoarer › Solglasögon". */
-function shortPath(c: Category): string {
-  const parts = c.path.split(" > ");
-  return parts.slice(-2).join(" › ");
 }
 
 export function CategoryPicker({ value, onChange, suggestion }: CategoryPickerProps) {
@@ -100,7 +54,7 @@ export function CategoryPicker({ value, onChange, suggestion }: CategoryPickerPr
   const suggestions = useMemo(
     () =>
       categories && suggestion?.trim()
-        ? rankCategoryMatches(suggestion, categories.filter((c) => c.leaf), 6)
+        ? rankByBreadcrumb(suggestion, categories.filter((c) => c.leaf), 6)
         : [],
     [categories, suggestion],
   );
