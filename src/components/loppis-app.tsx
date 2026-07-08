@@ -248,6 +248,7 @@ export function LoppisApp() {
   const [selectedItem, setSelectedItem] = useState<SellerItem | null>(null);
   const [itemDetail, setItemDetail] = useState<ItemDetails | null>(null);
   const [itemDetailBusy, setItemDetailBusy] = useState(false);
+  const [endBusy, setEndBusy] = useState(false);
   // Gates the camera until we've checked for a restorable draft, so returning
   // from the connect flow doesn't briefly flash the viewfinder.
   const [restoring, setRestoring] = useState(true);
@@ -838,6 +839,32 @@ export function LoppisApp() {
     }
   }
 
+  async function cancelListing(item: SellerItem) {
+    if (!window.confirm(`Avbryta annonsen "${item.title ?? `#${item.id}`}" på Tradera? Detta går inte att ångra.`)) {
+      return;
+    }
+    setEndBusy(true);
+    try {
+      const res = await fetch("/api/tradera/end", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ itemId: item.id }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        toast.success("Annonsen avbröts.");
+        setSelectedItem(null);
+        fetchListings();
+      } else {
+        toast.error(data.error ?? "Kunde inte avbryta annonsen.");
+      }
+    } catch {
+      toast.error("Nätverksfel.");
+    } finally {
+      setEndBusy(false);
+    }
+  }
+
   const renderListingItems = (items: SellerItem[]) =>
     items.map((it) => (
       <button
@@ -938,6 +965,17 @@ export function LoppisApp() {
               >
                 <ExternalLink className="h-4 w-4" /> Öppna på Tradera
               </a>
+
+              {listings?.active.some((a) => a.id === selectedItem.id) && (
+                <Button
+                  variant="destructive"
+                  onClick={() => cancelListing(selectedItem)}
+                  disabled={endBusy}
+                  className="mt-6 w-full"
+                >
+                  {endBusy ? "Avbryter…" : "Avbryt annons"}
+                </Button>
+              )}
             </div>
           </div>
         ) : (

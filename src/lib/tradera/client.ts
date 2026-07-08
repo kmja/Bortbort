@@ -211,6 +211,24 @@ export async function commitItem(
 }
 
 /**
+ * RestrictedService.EndItem — ends (cancels) one of the seller's active items
+ * early. Irreversible. Returns the raw response for the caller to inspect.
+ */
+export async function endItem(
+  itemId: number,
+  userAuth: TraderaUserAuth,
+  signal?: AbortSignal,
+): Promise<unknown> {
+  return callTradera<unknown>({
+    service: "restricted",
+    operation: "EndItem",
+    bodyInnerXml: xmlElement("itemId", itemId),
+    userAuth,
+    signal,
+  });
+}
+
+/**
  * A single, deliberately cheap, clearly-labelled test listing for the auth spike.
  * Keep it sandbox-only. Set TRADERA_TEST_CATEGORY_ID to a valid sandbox category id.
  */
