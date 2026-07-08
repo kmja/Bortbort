@@ -26,7 +26,7 @@ that can reach `api.tradera.com` to fully confirm — see "Going live (Tradera)"
 | Tradera config + **multi-app key pooling** | ✅ Verified locally (status reports the pool size) |
 | Tradera token-login URL | ✅ Verified — generated URL matches the portal's Authorization URL byte-for-byte |
 | Blocket / Facebook handoff (copy text, deep-link, download photo) | ✅ Client-side, works now |
-| Gemini identify/draft route (`/api/identify`) | ✅ Functional with a real `GEMINI_API_KEY` (defaults to cheap gemini-2.5-flash) |
+| Gemini identify/draft route (`/api/identify`) | ✅ Functional with a real `GEMINI_API_KEY` (defaults to cheap gemini-3.1-flash-lite) |
 | Tradera pricing query (`/api/tradera/price`) | ⚠️ Built; uses **active asking** prices, not sold — see below |
 | Live Tradera SOAP (`GetOfficialTime`, `Search`, `FetchToken`, `AddItem`) | ⚠️ **Not yet confirmed live** — build env can't reach `api.tradera.com` |
 

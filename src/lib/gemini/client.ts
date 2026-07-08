@@ -10,10 +10,10 @@ export class GeminiConfigError extends Error {
 
 /**
  * Model used for identification, batch detection, and valuation. Defaults to the
- * cheap vision-capable Gemini Flash; set GEMINI_MODEL to gemini-2.5-pro for
- * higher-quality output at higher cost.
+ * cheap vision-capable Gemini Flash Lite; set GEMINI_MODEL to a larger model
+ * (e.g. gemini-3.1-flash / -pro) for higher-quality output at higher cost.
  */
-export const GEMINI_MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
+export const GEMINI_MODEL = process.env.GEMINI_MODEL ?? "gemini-3.1-flash-lite";
 
 const API_BASE = "https://generativelanguage.googleapis.com/v1beta";
 
