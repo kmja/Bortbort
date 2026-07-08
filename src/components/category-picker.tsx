@@ -32,32 +32,37 @@ function normalizeCat(s: string): string {
 }
 
 /**
- * Best-effort match of an AI category breadcrumb to a listable (leaf) Tradera
- * category. Weights the most specific segment heaviest. Returns null when
- * nothing matches with reasonable confidence.
+ * Ranks listable (leaf) Tradera categories against an AI category breadcrumb.
+ * Weights the most specific segment heaviest and rewards parent-path context so
+ * "Accessoarer > Solglasögon" beats "Barnkläder > Solglasögon". Returns the top
+ * `limit` above a confidence floor — the first is the auto-pick, the rest are
+ * offered as one-tap alternatives.
  */
-function bestCategoryMatch(suggestion: string, leaves: Category[]): Category | null {
+function rankCategoryMatches(suggestion: string, leaves: Category[], limit: number): Category[] {
   const tokens = normalizeCat(suggestion).split(" ").filter(Boolean);
-  if (tokens.length === 0) return null;
-  const leaf = tokens[tokens.length - 1];
-  let best: Category | null = null;
-  let bestScore = 0;
+  if (tokens.length === 0) return [];
+  const leafTok = tokens[tokens.length - 1];
+  const scored: Array<{ c: Category; score: number }> = [];
   for (const c of leaves) {
     const nameTokens = new Set(normalizeCat(c.name).split(" ").filter(Boolean));
     const path = normalizeCat(c.path);
     let score = 0;
     for (const t of tokens) {
       if (nameTokens.has(t)) score += 10;
-      else if (path.includes(t)) score += 3;
+      else if (path.includes(t)) score += 4; // parent-path context breaks ties
     }
-    if (nameTokens.has(leaf)) score += 15;
+    if (nameTokens.has(leafTok)) score += 15;
     score += Math.min(c.path.split(">").length, 5) * 0.5;
-    if (score > bestScore) {
-      bestScore = score;
-      best = c;
-    }
+    if (score >= 12) scored.push({ c, score });
   }
-  return bestScore >= 13 ? best : null;
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, limit).map((s) => s.c);
+}
+
+/** Compact label for a pill: the last two path segments, e.g. "Accessoarer › Solglasögon". */
+function shortPath(c: Category): string {
+  const parts = c.path.split(" > ");
+  return parts.slice(-2).join(" › ");
 }
 
 export function CategoryPicker({ value, onChange, suggestion }: CategoryPickerProps) {
@@ -91,7 +96,16 @@ export function CategoryPicker({ value, onChange, suggestion }: CategoryPickerPr
     return m;
   }, [categories]);
 
-  // Auto-select the closest leaf from the AI's suggestion, once.
+  // Ranked AI category candidates: [0] is the auto-pick, the rest become pills.
+  const suggestions = useMemo(
+    () =>
+      categories && suggestion?.trim()
+        ? rankCategoryMatches(suggestion, categories.filter((c) => c.leaf), 6)
+        : [],
+    [categories, suggestion],
+  );
+
+  // Auto-select the top candidate once, if the user hasn't chosen anything.
   useEffect(() => {
     if (autoPicked.current || !categories) return;
     if (value) {
@@ -100,9 +114,8 @@ export function CategoryPicker({ value, onChange, suggestion }: CategoryPickerPr
     }
     if (!suggestion?.trim()) return;
     autoPicked.current = true;
-    const match = bestCategoryMatch(suggestion, categories.filter((c) => c.leaf));
-    if (match) onChange(String(match.id));
-  }, [categories, suggestion, value, onChange]);
+    if (suggestions[0]) onChange(String(suggestions[0].id));
+  }, [categories, suggestion, value, suggestions, onChange]);
 
   const selected = value ? byId.get(Number(value)) : undefined;
 
@@ -134,21 +147,42 @@ export function CategoryPicker({ value, onChange, suggestion }: CategoryPickerPr
     }
   }
 
-  // ── Collapsed state: show the selected category with a change button ────────
+  // ── Collapsed state: selected category + alternative suggestion pills ───────
   if (selected && !editing) {
+    const alts = suggestions.filter((c) => c.id !== selected.id).slice(0, 4);
     return (
-      <div className="flex items-center gap-2 rounded-md border p-2">
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm">{selected.path}</p>
-          <p className="text-muted-foreground text-xs">#{selected.id}</p>
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center gap-2 rounded-md border p-2">
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm">{selected.path}</p>
+            <p className="text-muted-foreground text-xs">#{selected.id}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setEditing(true)}
+            className="text-primary shrink-0 text-xs underline"
+          >
+            Ändra
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={() => setEditing(true)}
-          className="text-primary shrink-0 text-xs underline"
-        >
-          Ändra
-        </button>
+        {alts.length > 0 && (
+          <div className="flex flex-col gap-1">
+            <span className="text-muted-foreground text-xs">Andra förslag:</span>
+            <div className="flex flex-wrap gap-1.5">
+              {alts.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => onChange(String(c.id))}
+                  className="hover:bg-accent rounded-full border px-2.5 py-1 text-xs"
+                  title={c.path}
+                >
+                  {shortPath(c)}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     );
   }
