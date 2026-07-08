@@ -54,6 +54,18 @@ const parser = new XMLParser({
   trimValues: true,
 });
 
+// Some Tradera responses (notably GetCategories) carry their data in XML
+// attributes (<Category Id="1" Name="…" />). This variant keeps them, prefixed
+// with "@_". Opt in per call via CallOptions.parseAttributes so the default
+// attribute-free parsing used everywhere else is unchanged.
+const parserWithAttrs = new XMLParser({
+  ignoreAttributes: false,
+  attributeNamePrefix: "@_",
+  removeNSPrefix: true,
+  parseTagValue: true,
+  trimValues: true,
+});
+
 interface BuildEnvelopeOptions {
   operation: string;
   /** Inner XML placed inside the operation element (already escaped). */
@@ -130,6 +142,8 @@ export interface CallOptions {
    * belongs to, so leave this false there.
    */
   rotateApp?: boolean;
+  /** Keep XML attributes (prefixed "@_") when parsing. Needed for GetCategories. */
+  parseAttributes?: boolean;
   /** Abort/timeout signal. */
   signal?: AbortSignal;
 }
@@ -176,7 +190,7 @@ export async function callTradera<T = unknown>(opts: CallOptions): Promise<T> {
   }
 
   const text = await res.text();
-  return parseSoapResponse(text, res.status, opts.operation) as T;
+  return parseSoapResponse(text, res.status, opts.operation, opts.parseAttributes) as T;
 }
 
 /**
@@ -188,8 +202,9 @@ export function parseSoapResponse(
   text: string,
   httpStatus: number,
   operation: string,
+  keepAttributes = false,
 ): unknown {
-  const root = asRecord(parser.parse(text));
+  const root = asRecord((keepAttributes ? parserWithAttrs : parser).parse(text));
   const envelopeNode = asRecord(root?.Envelope);
   const body = asRecord(envelopeNode?.Body);
 

@@ -64,8 +64,11 @@ function flatten(
   const rec = asRecord(node);
   if (!rec) return;
 
-  const id = toNumber(rec.Id);
-  const name = typeof rec.Name === "string" ? rec.Name : undefined;
+  // Live GetCategories carries Id/Name as attributes ("@_Id"/"@_Name"); the unit
+  // tests use plain Id/Name. Accept both.
+  const id = toNumber(rec["@_Id"] ?? rec.Id);
+  const rawName = rec["@_Name"] ?? rec.Name;
+  const name = typeof rawName === "string" ? rawName : undefined;
   const nextTrail = name ? [...trail, name] : trail;
   const children = childrenOf(rec);
 
@@ -102,6 +105,8 @@ async function fetchCategoriesRaw(signal?: AbortSignal): Promise<unknown> {
     service: "public",
     operation: "GetCategories",
     rotateApp: true,
+    // Category id + name live in XML attributes, not child elements.
+    parseAttributes: true,
     signal,
   });
 }

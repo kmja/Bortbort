@@ -53,6 +53,33 @@ describe("parseCategories", () => {
     ]);
   });
 
+  it("reads id/name from XML attributes (@_Id/@_Name), as the live API returns them", () => {
+    // Shape produced by the attribute-aware parser: ids arrive as strings.
+    const result = {
+      GetCategoriesResult: {
+        Category: [
+          {
+            "@_Id": "1",
+            "@_Name": "Antikt & Design",
+            Category: [
+              { "@_Id": "10", "@_Name": "Möbler", Category: [{ "@_Id": "100", "@_Name": "Stolar" }] },
+            ],
+          },
+          { "@_Id": "2", "@_Name": "Elektronik" },
+        ],
+      },
+    };
+    const flat = parseCategories(result);
+    const byId = Object.fromEntries(flat.map((c) => [c.id, c]));
+
+    expect(flat).toHaveLength(4);
+    expect(byId[100].path).toBe("Antikt & Design > Möbler > Stolar");
+    expect(byId[100].parentId).toBe(10);
+    expect(byId[100].leaf).toBe(true);
+    expect(byId[1].leaf).toBe(false);
+    expect(byId[2].parentId).toBeNull();
+  });
+
   it("returns [] for empty or missing input", () => {
     expect(parseCategories(undefined)).toEqual([]);
     expect(parseCategories({})).toEqual([]);
