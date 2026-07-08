@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { VERSION_LABEL } from "@/lib/version";
+import { APP_COMMIT, VERSION_LABEL } from "@/lib/version";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -238,6 +238,38 @@ export function LoppisApp() {
       streamRef.current = null;
     };
   }, [restoring, appState, noCam]);
+
+  // Detect a newer deployment and offer to reload — so a long-lived tab never
+  // silently keeps running stale JS. Compares our baked commit to the live one.
+  useEffect(() => {
+    if (!APP_COMMIT) return; // dev / unbuilt — nothing to compare against
+    let prompted = false;
+    async function check() {
+      if (prompted || document.hidden) return;
+      try {
+        const res = await fetch("/api/version", { cache: "no-store" });
+        const data = (await res.json()) as { commit?: string };
+        if (data.commit && data.commit !== APP_COMMIT) {
+          prompted = true;
+          toast("Ny version tillgänglig", {
+            description: "Ladda om för att uppdatera appen.",
+            duration: Infinity,
+            action: { label: "Ladda om", onClick: () => window.location.reload() },
+          });
+        }
+      } catch {
+        /* offline / transient — try again next tick */
+      }
+    }
+    const id = setInterval(check, 60_000);
+    const onVisible = () => { if (!document.hidden) check(); };
+    document.addEventListener("visibilitychange", onVisible);
+    check();
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
 
   // Status + draft restore + token-login redirect result on mount
   useEffect(() => {
