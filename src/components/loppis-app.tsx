@@ -672,6 +672,21 @@ export function LoppisApp() {
     }
   }
 
+  async function testCategories() {
+    setBusy("ping");
+    try {
+      const res = await fetch("/api/tradera/categories?debug=1", { cache: "no-store" });
+      const data = await res.json();
+      setDiag({ title: "GET /api/tradera/categories?debug=1", data });
+      if (data.ok) toast.success(`Kategorier tolkade: ${data.parsedCount ?? 0}`);
+      else toast.error(data.error ?? "Kunde inte hämta kategorier.");
+    } catch {
+      toast.error("Nätverksfel.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   // ── Hidden shared file input ──────────────────────────────────────────────
 
   const fileInput = (
@@ -1063,6 +1078,9 @@ export function LoppisApp() {
             <div className="flex flex-wrap gap-2 pt-1">
               <Button size="sm" variant="outline" onClick={testConnection} disabled={busy !== null}>
                 {busy === "ping" ? "Testar…" : "Testa anslutning"}
+              </Button>
+              <Button size="sm" variant="outline" onClick={testCategories} disabled={busy !== null}>
+                Testa kategorier
               </Button>
               <Button size="sm" variant="outline" onClick={connectTradera}>
                 Anslut Tradera-konto

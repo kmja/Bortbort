@@ -97,19 +97,41 @@ export function parseCategories(result: unknown): TraderaCategory[] {
   return out;
 }
 
-export async function getCategoriesFlat(
-  signal?: AbortSignal,
-): Promise<TraderaCategory[]> {
-  if (cache && Date.now() - cache.at < TTL_MS) return cache.data;
-
-  const res = await callTradera<Record<string, unknown>>({
+async function fetchCategoriesRaw(signal?: AbortSignal): Promise<unknown> {
+  return callTradera<Record<string, unknown>>({
     service: "public",
     operation: "GetCategories",
     rotateApp: true,
     signal,
   });
+}
 
-  const data = parseCategories(res);
-  cache = { at: Date.now(), data };
+export async function getCategoriesFlat(
+  signal?: AbortSignal,
+): Promise<TraderaCategory[]> {
+  if (cache && Date.now() - cache.at < TTL_MS) return cache.data;
+
+  const data = parseCategories(await fetchCategoriesRaw(signal));
+  // Only cache a non-empty result — an empty parse is almost always a transient
+  // failure or a shape we don't yet handle, and we don't want to pin it for 12h.
+  if (data.length > 0) cache = { at: Date.now(), data };
   return data;
+}
+
+/**
+ * Diagnostic: the raw GetCategories node plus how many we can currently parse
+ * out of it. Lets us see the live response shape without server log access.
+ */
+export async function getCategoriesDebug(signal?: AbortSignal): Promise<{
+  parsedCount: number;
+  topKeys: string[] | string;
+  sample: string;
+}> {
+  const raw = await fetchCategoriesRaw(signal);
+  const obj = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : null;
+  return {
+    parsedCount: parseCategories(raw).length,
+    topKeys: obj ? Object.keys(obj) : typeof raw,
+    sample: JSON.stringify(raw).slice(0, 2500),
+  };
 }

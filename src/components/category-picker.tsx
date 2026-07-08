@@ -153,8 +153,12 @@ export function CategoryPicker({ value, onChange, suggestion }: CategoryPickerPr
     );
   }
 
-  // ── Load failure: numeric-only manual id (never accept free text) ───────────
-  if (loadError) {
+  if (!categories && !loadError) {
+    return <p className="text-muted-foreground text-sm">Hämtar kategorier…</p>;
+  }
+
+  // ── Load failure OR empty list: numeric-only manual id (never free text) ────
+  if (loadError || (categories && categories.length === 0)) {
     return (
       <div className="flex flex-col gap-1.5">
         <Input
@@ -165,15 +169,11 @@ export function CategoryPicker({ value, onChange, suggestion }: CategoryPickerPr
           className="max-w-48"
         />
         <p className="text-muted-foreground text-xs">
-          Kunde inte hämta kategorilistan (kräver app-nyckel + nätverk till Tradera).
-          Ange en giltig kategori-id (endast siffror).
+          Kunde inte hämta kategorilistan från Tradera (0 kategorier). Ange en
+          giltig kategori-id (endast siffror) tills listan fungerar.
         </p>
       </div>
     );
-  }
-
-  if (!categories) {
-    return <p className="text-muted-foreground text-sm">Hämtar kategorier…</p>;
   }
 
   // ── Tree / search picker ────────────────────────────────────────────────────
