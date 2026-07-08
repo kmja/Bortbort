@@ -5,6 +5,7 @@ import { errorResponse } from "@/lib/api-response";
 import { getUserAuth } from "@/lib/tradera/auth";
 import { addItem, addItemImage, commitItem, type TraderaImageFormat } from "@/lib/tradera/client";
 import { isSandbox } from "@/lib/tradera/config";
+import { getListingOptions } from "@/lib/tradera/options";
 import type { AddItemRequest } from "@/lib/tradera/types";
 
 // Staged image upload = several sequential Tradera calls; give it room.
@@ -17,6 +18,8 @@ const BodySchema = z.object({
   startPrice: z.number().positive(),
   durationDays: z.number().int().positive().optional(),
   buyItNowPrice: z.number().nonnegative().optional(),
+  /** Shipping cost in SEK for the default shipping option (0 = free/pickup). */
+  shippingCost: z.number().nonnegative().optional(),
   /** Data-URL images (data:image/jpeg;base64,...). Attached via the staged flow. */
   images: z.array(z.string()).max(12).optional(),
 });
@@ -82,6 +85,15 @@ export async function POST(request: NextRequest) {
       .filter((x): x is { format: TraderaImageFormat; base64: string } => x !== null);
     const hasImages = images.length > 0;
 
+    // Shipping + payment require real ids from Tradera; fetch and default them so
+    // the seller doesn't have to. A shipping option is mandatory (non-empty).
+    const options = await getListingOptions().catch(() => ({ shipping: [], payment: [] }));
+    const shippingOptionId = options.shipping[0]?.id;
+    const shippingOptions = shippingOptionId
+      ? [{ shippingOptionId, cost: parsed.data.shippingCost ?? 0 }]
+      : [];
+    const paymentOptionIds = options.payment.map((o) => o.id);
+
     const req: AddItemRequest = {
       title: parsed.data.title,
       description: parsed.data.description,
@@ -91,9 +103,25 @@ export async function POST(request: NextRequest) {
       startPrice: parsed.data.startPrice,
       reservePrice: 0,
       buyItNowPrice: parsed.data.buyItNowPrice ?? 0,
+      acceptedBidderId: 1, // Sweden
+      shippingOptions,
+      paymentOptionIds,
+      shippingCondition: "Köparen betalar frakten om inget annat anges.",
       // Staged (commit later) only when we have images to attach first.
       autoCommit: !hasImages,
     };
+
+    if (shippingOptions.length === 0) {
+      return NextResponse.json(
+        {
+          ok: false,
+          kind: "config",
+          error:
+            "Kunde inte hämta giltiga fraktalternativ från Tradera (tomt). Kör 'Testa frakt/betalning' i diagnostiken.",
+        },
+        { status: 502 },
+      );
+    }
 
     const result = await addItem(req, userAuth);
 

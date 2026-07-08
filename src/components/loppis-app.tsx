@@ -203,6 +203,7 @@ export function LoppisApp() {
   const [traderaCategoryId, setTraderaCategoryId] = useState("");
   const [categorySuggestion, setCategorySuggestion] = useState("");
   const [valuation, setValuation] = useState<Valuation | null>(null);
+  const [shippingCost, setShippingCost] = useState("63");
   const [captureMode, setCaptureMode] = useState<"single" | "multi">("single");
   const [batchItems, setBatchItems] = useState<BatchItem[]>([]);
   const [batchPhoto, setBatchPhoto] = useState<Photo | null>(null);
@@ -648,6 +649,7 @@ export function LoppisApp() {
           categoryId: Number(traderaCategoryId),
           startPrice: Number(priceDigits),
           buyItNowPrice: buyoutDigits ? Number(buyoutDigits) : undefined,
+          shippingCost: Number((shippingCost || "0").replace(/[^\d]/g, "")) || 0,
           durationDays: 7,
           images: images.map((p) => p.dataUrl),
         }),
@@ -712,6 +714,21 @@ export function LoppisApp() {
       setDiag({ title: "GET /api/tradera/categories?debug=1", data });
       if (data.ok) toast.success(`Kategorier tolkade: ${data.parsedCount ?? 0}`);
       else toast.error(data.error ?? "Kunde inte hämta kategorier.");
+    } catch {
+      toast.error("Nätverksfel.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function testOptions() {
+    setBusy("ping");
+    try {
+      const res = await fetch("/api/tradera/options?debug=1", { cache: "no-store" });
+      const data = await res.json();
+      setDiag({ title: "GET /api/tradera/options?debug=1", data });
+      if (data.ok) toast.success(`Frakt: ${data.shippingCount ?? 0}, Betalning: ${data.paymentCount ?? 0}`);
+      else toast.error(data.error ?? "Kunde inte hämta alternativ.");
     } catch {
       toast.error("Nätverksfel.");
     } finally {
@@ -1069,6 +1086,21 @@ export function LoppisApp() {
         </div>
 
         <div className="flex flex-col gap-1.5">
+          <Label htmlFor="shipping">Frakt (kr)</Label>
+          <Input
+            id="shipping"
+            inputMode="numeric"
+            value={shippingCost}
+            onChange={(e) => setShippingCost(e.target.value)}
+            className="max-w-40"
+            placeholder="0"
+          />
+          <p className="text-muted-foreground text-xs">
+            Fraktkostnad köparen betalar. 0 = fri frakt / hämtas.
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
           <Label htmlFor="condition">Skick</Label>
           <Input
             id="condition"
@@ -1113,6 +1145,9 @@ export function LoppisApp() {
               </Button>
               <Button size="sm" variant="outline" onClick={testCategories} disabled={busy !== null}>
                 Testa kategorier
+              </Button>
+              <Button size="sm" variant="outline" onClick={testOptions} disabled={busy !== null}>
+                Testa frakt/betalning
               </Button>
               <Button size="sm" variant="outline" onClick={connectTradera}>
                 Anslut Tradera-konto

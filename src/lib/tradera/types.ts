@@ -45,10 +45,16 @@ export interface AddItemRequest {
   reservePrice?: number;
   /** Buy-It-Now price in SEK (0 = none). */
   buyItNowPrice?: number;
-  /** Payment option ids. VERIFY valid ids via the API. */
+  /** Who may bid: 1 = Sweden, 3 = International, 4 = EU. Required (0 is invalid). */
+  acceptedBidderId?: number;
+  /** Payment option ids (PublicService.GetPaymentOptions). */
   paymentOptionIds?: number[];
-  /** Shipping options: { shippingOptionId, cost }. VERIFY ids/shape. */
+  /** Shipping options: { shippingOptionId, cost }. At least one is required. */
   shippingOptions?: Array<{ shippingOptionId: number; cost: number }>;
+  /** Free-text shipping terms shown to buyers. */
+  shippingCondition?: string;
+  /** Free-text payment terms shown to buyers. */
+  paymentCondition?: string;
   /** Item condition / attributes. VERIFY accepted values. */
   itemAttributes?: number[];
   /**

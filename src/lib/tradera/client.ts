@@ -125,6 +125,7 @@ export async function addItem(
     xmlElement("Description", req.description) +
     xmlElement("CategoryId", req.categoryId) +
     xmlElement("ItemType", req.itemType ?? 1) + // 1 = Auktion; 0 is invalid
+    xmlElement("AcceptedBidderId", req.acceptedBidderId ?? 1) + // 1 = Sweden; 0 is invalid
     xmlElement("Duration", req.durationDays) +
     xmlElement("Restarts", req.restarts) +
     xmlElement("StartPrice", req.startPrice) +
@@ -132,6 +133,8 @@ export async function addItem(
     xmlElement("BuyItNowPrice", req.buyItNowPrice ?? 0) +
     xmlElement("AutoCommit", (req.autoCommit ?? true) ? "true" : "false") +
     xmlElement("VAT", req.vat) +
+    xmlElement("ShippingCondition", req.shippingCondition) +
+    xmlElement("PaymentCondition", req.paymentCondition) +
     arrayElement("PaymentOptionIds", "int", req.paymentOptionIds ?? []) +
     arrayElement("ItemAttributes", "int", req.itemAttributes ?? []) +
     shippingXml;
