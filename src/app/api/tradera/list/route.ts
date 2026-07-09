@@ -19,6 +19,8 @@ const BodySchema = z.object({
   durationDays: z.number().int().positive().optional(),
   buyItNowPrice: z.number().nonnegative().optional(),
   reservePrice: z.number().int().positive().optional(),
+  /** Structured condition term ids (ItemAttributes). */
+  itemAttributes: z.array(z.number().int().positive()).max(20).optional(),
   /** Shipping cost in SEK for the default shipping option (0 = free/pickup). */
   shippingCost: z.number().nonnegative().optional(),
   /** Data-URL images (data:image/jpeg;base64,...). Attached via the staged flow. */
@@ -108,6 +110,7 @@ export async function POST(request: NextRequest) {
       buyItNowPrice: parsed.data.buyItNowPrice ?? 0,
       acceptedBidderId: 1, // Sweden
       shippingOptions,
+      itemAttributes: parsed.data.itemAttributes,
       shippingCondition: "Köparen betalar frakten om inget annat anges.",
       // Staged (commit later) only when we have images to attach first.
       autoCommit: !hasImages,

@@ -251,6 +251,8 @@ export function LoppisApp() {
   const [shippingCost, setShippingCost] = useState("63");
   const [durationDays, setDurationDays] = useState("7");
   const [reserve, setReserve] = useState("");
+  const [conditionOptions, setConditionOptions] = useState<{ id: number; name: string }[]>([]);
+  const [conditionId, setConditionId] = useState("");
   const [descriptionTone, setDescriptionTone] = useState<DescriptionTone>("selling");
   const [batchItems, setBatchItems] = useState<BatchItem[]>([]);
   const [batchPhoto, setBatchPhoto] = useState<Photo | null>(null);
@@ -335,6 +337,16 @@ export function LoppisApp() {
   useEffect(() => {
     let active = true;
     fetchTraderaStatus().then((s) => { if (active && s) setStatus(s); });
+
+    fetch("/api/tradera/attributes", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d: { ok?: boolean; condition?: { id: number; name: string }[] }) => {
+        if (!active || !d.ok || !Array.isArray(d.condition)) return;
+        setConditionOptions(d.condition);
+        const used = d.condition.find((c) => /begagn/i.test(c.name));
+        if (used) setConditionId(String(used.id));
+      })
+      .catch(() => {});
 
     const q = new URLSearchParams(window.location.search);
     const tradera = q.get("tradera");
@@ -739,6 +751,7 @@ export function LoppisApp() {
           startPrice: Number(priceDigits),
           buyItNowPrice: buyoutDigits ? Number(buyoutDigits) : undefined,
           reservePrice: Number(reserve.replace(/[^\d]/g, "")) || undefined,
+          itemAttributes: conditionId ? [Number(conditionId)] : undefined,
           shippingCost: Number((shippingCost || "0").replace(/[^\d]/g, "")) || 0,
           durationDays: Number(durationDays) || 7,
           images: images.map((p) => p.dataUrl),
@@ -1544,14 +1557,34 @@ export function LoppisApp() {
           </div>
         </div>
 
+        {conditionOptions.length > 0 && (
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="condition-select">Skick</Label>
+            <select
+              id="condition-select"
+              value={conditionId}
+              onChange={(e) => setConditionId(e.target.value)}
+              className="border-input bg-background h-9 rounded-md border px-3 text-sm"
+            >
+              <option value="">Välj skick…</option>
+              {conditionOptions.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="condition">Skick</Label>
+          <Label htmlFor="condition">Skickdetaljer</Label>
           <Input
             id="condition"
             value={draft?.conditionNotes ?? ""}
             onChange={(e) => setField("conditionNotes", e.target.value)}
             placeholder="T.ex. Gott begagnat skick, inga defekter"
           />
+          <p className="text-muted-foreground text-xs">Visas i beskrivningen.</p>
         </div>
 
         <div className="flex flex-col gap-1.5">
