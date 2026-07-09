@@ -4,12 +4,13 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 30;
 
 /**
- * Diagnostic: reads the sample SOAP request off Tradera's ASMX op pages so we
- * can see the exact element structure of write methods before building them.
+ * Diagnostic: reads the sample SOAP request + response off Tradera's ASMX op
+ * pages so we can see the exact structure of a method (params + result shape)
+ * before building against it.
  */
 const OPS: Array<{ service: string; op: string }> = [
-  { service: "RestrictedService", op: "EndItem" },
-  { service: "RestrictedService", op: "SetPricesOnNonShopItems" },
+  { service: "PublicService", op: "GetAttributeDefinitions" },
+  { service: "PublicService", op: "GetItemFieldValues" },
 ];
 
 function decode(s: string): string {
@@ -21,8 +22,12 @@ function decode(s: string): string {
     .replace(/&amp;/g, "&");
 }
 
+function bodyOf(pre: string): string {
+  return (pre.match(/<soap:Body>([\s\S]*?)<\/soap:Body>/i)?.[1] ?? pre).trim();
+}
+
 export async function GET() {
-  const out: Record<string, string> = {};
+  const out: Record<string, { request?: string; response?: string } | string> = {};
   await Promise.all(
     OPS.map(async ({ service, op }) => {
       try {
@@ -30,11 +35,15 @@ export async function GET() {
           cache: "no-store",
         });
         const html = await res.text();
-        const pres = [...html.matchAll(/<pre>([\s\S]*?)<\/pre>/g)].map((m) => decode(m[1]));
-        const soapReq = pres.find((p) => /soap:Body/i.test(p) && /Envelope/i.test(p));
-        // Return just the <soap:Body>…</soap:Body> inner, truncated.
-        const body = soapReq?.match(/<soap:Body>([\s\S]*?)<\/soap:Body>/i)?.[1] ?? soapReq ?? "not found";
-        out[op] = body.trim().slice(0, 1400);
+        const soapPres = [...html.matchAll(/<pre>([\s\S]*?)<\/pre>/g)]
+          .map((m) => decode(m[1]))
+          .filter((p) => /soap:Body/i.test(p) && /Envelope/i.test(p));
+        const request = soapPres.find((p) => new RegExp(`<${op}[ >]`).test(p));
+        const response = soapPres.find((p) => new RegExp(`<${op}Response`).test(p));
+        out[op] = {
+          request: request ? bodyOf(request).slice(0, 1200) : "not found",
+          response: response ? bodyOf(response).slice(0, 2000) : "not found",
+        };
       } catch (e) {
         out[op] = e instanceof Error ? e.message : String(e);
       }
